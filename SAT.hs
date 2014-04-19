@@ -52,7 +52,7 @@ data Conflict = C
    { cMap     :: Map Literal Bool --Map of literals in conflict
    , cPartial :: Clause  --List of literals from lower decision levels
    , cLast    :: Literal --Last asserted literal of (map negate conflict)
-   , cN       :: Int     --Number of literals at currentLevel of litTrail
+   , cNum     :: Int     --Number of literals at currentLevel of litTrail
    }
    deriving (Show)
 
@@ -99,19 +99,19 @@ getConflictClause :: LiteralTrail -> Formula -> Clause
 getConflictClause ls = head . filter (falseClause ls)
 
 addLiteral :: State -> Literal -> State
-addLiteral s@(S _ ls c@(C cH cP cL cN) _) l = if M.notMember l cH
+addLiteral s@(S _ ls c@(C cH cP _ cN) _) l = if M.notMember l cH
     then let cH' = M.insert l True cH
          in if decisionLevel ls (-l) == currentLevel ls
-                then s { conflict = c { cN = cN + 1 } }
-                else s { conflict = c { cPartial = cP ++ [l] } }
+                then s { conflict = c { cMap = cH', cNum = cN + 1 } }
+                else s { conflict = c { cMap = cH', cPartial = cP ++ [l] } }
     else s
 
 removeLiteral :: State -> Literal -> State
-removeLiteral s@(S _ ls c@(C cH cP cL cN) _) l =
-    let cH' = M.insert l True cH
+removeLiteral s@(S _ ls c@(C cH cP _ cN) _) l =
+    let cH' = M.insert l False cH
     in if decisionLevel ls (-l) == currentLevel ls
-           then s { conflict = c { cN = cN - 1 } }
-           else s { conflict = c { cPartial = S.toList . S.delete l . S.fromList $ cP } }
+           then s { conflict = c { cMap = cH', cNum = cN - 1 } }
+           else s { conflict = c { cMap = cH', cPartial = S.toList . S.delete l . S.fromList $ cP } }
 {-
 buildConflict :: Conflict -> Clause
 buildConflict (C _ cP cL _) = cP ++ [cL]
@@ -121,12 +121,12 @@ applyConflict :: State -> State
 applyConflict s@(S f ls _ _) = foldl addLiteral s $ getConflictClause ls f
 
 explainEmpty :: State -> State
-explainEmpty s@(S _ ls (C _ cP cL _) _)
+explainEmpty s@(S _ _ (C _ cP cL _) _)
   | null $ cL : cP = s
   | otherwise      = explainEmpty $ explain s cL
 
 explainUIP :: State -> State
-explainUIP s@(S _ ls (C _ cP cL _) _)
+explainUIP s@(S _ _ (C _ cP cL _) _)
   | null $ cL : cP = s
   | otherwise      = if not $ isUIP s then explainUIP $ explain s cL else s
 
@@ -135,7 +135,7 @@ explain s l = trace ("Explained " ++ show l ++ " by " ++ show (getConflictReason
                     findLastAssertedLiteral $ resolve s (getConflictReason s l) l
 
 resolve :: State -> Clause -> Literal -> State
-resolve s@(S _ _ (C _ cP cL _) _) c l = foldl addLiteral (removeLiteral s (-l)) $ S.toList . S.delete l . S.fromList $ c
+resolve s c l = foldl addLiteral (removeLiteral s (-l)) $ S.toList . S.delete l . S.fromList $ c
 
 findLastAssertedLiteral :: State -> State
 findLastAssertedLiteral s@(S _ ls c _) = s { conflict = c { cLast = lastAsserted } }
@@ -162,12 +162,12 @@ learn s = trace ("Learned " ++ show c') $ s { formula = formula s ++ [c'] }
 
 backjump :: State -> State
 backjump s@(S _ ls (C _ cP cL _) _) = setConflictReason (assertLiteral s' (-cL) False) (-cL) $ cP ++ [cL]
-  where ls' = prefixToLevel (litTrail s) $ getBackJumpLevel s
+  where ls' = prefixToLevel ls $ getBackJumpLevel s
         s'  = s { litTrail = ls', conflict = C M.empty [] 0 0 }
 
 getBackJumpLevel :: State -> Int
-getBackJumpLevel (S _ ls (C _ [] _ _) _) = 0
-getBackJumpLevel (S _ ls (C _ cP _ _) _) = maximum $ map (decisionLevel ls) (map negate cP)
+getBackJumpLevel (S _ _  (C _ [] _ _) _) = 0
+getBackJumpLevel (S _ ls (C _ cP _ _) _) = maximum $ map (decisionLevel ls . negate) cP
 
 --Solver
 
