@@ -111,10 +111,11 @@ removeLiteral s@(S _ ls c@(C cH cP cL cN) _) l =
     let cH' = M.insert l True cH
     in if decisionLevel ls (-l) == currentLevel ls
            then s { conflict = c { cN = cN - 1 } }
-           else s { conflict = c { cPartial = cP L.\\ [l] } }
-
+           else s { conflict = c { cPartial = S.toList . S.delete l . S.fromList $ cP } }
+{-
 buildConflict :: Conflict -> Clause
 buildConflict (C _ cP cL _) = cP ++ [cL]
+-}
 
 applyConflict :: State -> State
 applyConflict s@(S f ls _ _) = foldl addLiteral s $ getConflictClause ls f
@@ -130,11 +131,15 @@ explainUIP s@(S _ ls (C _ cP cL _) _)
   | otherwise      = if not $ isUIP s then explainUIP $ explain s cL else s
 
 explain :: State -> Literal -> State
-explain s l = trace ("Explained " ++ show l ++ " by " ++ show (getConflictReason s l)) $ s { conflict = resolvent c (getConflictReason s l) (-l) }
-  where c = conflict s
+explain s l = trace ("Explained " ++ show l ++ " by " ++ show (getConflictReason s l)) $
+                    findLastAssertedLiteral $ resolve s (getConflictReason s l) l
 
-resolvent :: Clause -> Clause -> Literal -> Clause
-resolvent c1 c2 l = S.toList $ S.union (S.delete l $ S.fromList c1) (S.delete l $ S.fromList c2)
+resolve :: State -> Clause -> Literal -> State
+resolve s@(S _ _ (C _ cP cL _) _) c l = foldl addLiteral (removeLiteral s (-l)) $ S.toList . S.delete l . S.fromList $ c
+
+findLastAssertedLiteral :: State -> State
+findLastAssertedLiteral s@(S _ ls c _) = s { conflict = c { cLast = lastAsserted } }
+  where lastAsserted = head [ l | l <- reverse (map fst ls), M.findWithDefault False (-l) $ cMap c ]
 
 getConflictReason :: State -> Literal -> Clause
 getConflictReason s l = M.findWithDefault (error "No reason for literal propogation") l (reasons s)
@@ -143,34 +148,26 @@ setConflictReason :: State -> Literal -> Clause -> State
 setConflictReason s l c = s { reasons = M.insert l c $ reasons s }
 
 isUIP :: State -> Bool
-isUIP (S _ _ (C _ _ _ cN) _) = cN == 1 {- null [ l' | l' <- c, l' /= l, decisionLevel ls l' == decisionLevel ls l]
-  where ls = litTrail s
-        c  = conflict s
-        l  = lastAssertedLiteral (map negate c) ls -}
+isUIP (S _ _ (C _ _ _ cN) _) = cN == 1
 
 lastAssertedLiteral :: Clause -> LiteralTrail -> Literal
 lastAssertedLiteral c = last . filter (`elem` c) . map fst
 
 learn :: State -> State
-learn s = trace ("Learned " ++ show (conflict s)) $ s { formula = formula s ++ [conflict s] }
+learn s = trace ("Learned " ++ show c') $ s { formula = formula s ++ [c'] }
+  where c  = conflict s
+        c' = cPartial c ++ [cLast c]
 
 --Backjumping
 
 backjump :: State -> State
-backjump s = setConflictReason (assertLiteral s' (-l) False) (-l) c
-  where ls    = litTrail s
-        c     = conflict s
-        l     = lastAssertedLiteral (map negate c) ls
-        level = getBackJumpLevel s
-        ls'   = prefixToLevel ls level
-        s'    = s { litTrail = ls', conflict = [] }
+backjump s@(S _ ls (C _ cP cL _) _) = setConflictReason (assertLiteral s' (-cL) False) (-cL) $ cP ++ [cL]
+  where ls' = prefixToLevel (litTrail s) $ getBackJumpLevel s
+        s'  = s { litTrail = ls', conflict = C M.empty [] 0 0 }
 
 getBackJumpLevel :: State -> Int
-getBackJumpLevel s = if null c'' then maximum $ map (decisionLevel ls) c'' else 0
-  where ls = litTrail s
-        c' = map negate $ conflict s
-        l  = lastAssertedLiteral c' ls
-        c'' = c' L.\\ [l]
+getBackJumpLevel (S _ ls (C _ [] _ _) _) = 0
+getBackJumpLevel (S _ ls (C _ cP _ _) _) = maximum $ map (decisionLevel ls) (map negate cP)
 
 --Solver
 
@@ -217,4 +214,4 @@ solve s = let s1@(S f ls _ _) = unitPropogate s in
                 else solve $ decide s1
 
 main :: IO ()
-main = print . solve . (\f -> S f [] [] M.empty) $ [[-1,2], [-3,4], [-1,-3,5], [-2,-4,-5], [-2,3,5,-6], [-1,3,-5,-6], [1,-6], [1,7]]
+main = print . solve . (\f -> S f [] (C M.empty [] 0 0) M.empty) $ [[-1,2], [-3,4], [-1,-3,5], [-2,-4,-5], [-2,3,5,-6], [-1,3,-5,-6], [1,-6], [1,7]]
