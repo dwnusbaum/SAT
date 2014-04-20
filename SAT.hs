@@ -108,11 +108,10 @@ addLiteral s@(S _ ls c@(C cH cP _ cN) _) l = if M.notMember l cH
     else s
 
 removeLiteral :: State -> Literal -> State
-removeLiteral s@(S _ ls c@(C cH cP _ cN) _) l =
-    let cH' = M.insert l False cH
-    in if decisionLevel ls (-l) == currentLevel ls
-           then s { conflict = c { cMap = cH', cNum = cN - 1 } }
-           else s { conflict = c { cMap = cH', cPartial = S.delete l cP } }
+removeLiteral s@(S _ ls c@(C cH cP _ cN) _) l = if decisionLevel ls (-l) == currentLevel ls
+    then s { conflict = c { cMap = cH', cNum = cN - 1 } }
+    else s { conflict = c { cMap = cH', cPartial = S.delete l cP } }
+  where cH' = M.insert l False cH
 
 applyConflict :: State -> State
 applyConflict s@(S f ls _ _) = findLastAssertedLiteral $ foldl addLiteral s $ trace ("Conflict: " ++ show conflictClause) conflictClause
