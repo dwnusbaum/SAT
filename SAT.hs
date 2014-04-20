@@ -3,7 +3,13 @@
 -- Implemented from http://poincare.matf.bg.ac.rs/~filip/phd/sat-tutorial.pdf
 -- This solver uses techniques through v.4 of the sovler in that paper
 
-module SAT(Sat, solveFormula) where
+module SAT( Sat
+          , State(..)
+          , Conflict(..)
+          , solve
+          , solveFormula
+          , paper1
+          ) where
 
 import Control.Arrow (first)
 import Data.Map (Map)

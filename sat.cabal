@@ -1,0 +1,13 @@
+name:                sat
+version:             0.7
+description:         Simple SAT solver written in Haskell
+license:             BSD3
+license-file:        LICENSE
+author:              Devin Nusbaum
+maintainer:          d.w.nusbaum@gmail.com
+build-Type:          Simple
+cabal-Version:       >=1.2
+
+executable sat
+  Main-is:           Main.hs
+  Build-Depends:     base >= 3, containers, haskeline, mtl, transformers
