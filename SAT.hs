@@ -1,20 +1,26 @@
-{-# OPTIONS_GHC -Wall -Werror #-}
+{-# OPTIONS_GHC -Wall #-}
 
 -- Implemented from http://poincare.matf.bg.ac.rs/~filip/phd/sat-tutorial.pdf
 -- This solver uses techniques through v.4 of the sovler in that paper
 
-module SAT( Sat
+module SAT( Sat(..)
           , State(..)
           , Conflict(..)
+          , LiteralTrail
+          , Formula
+          , Clause
+          , Literal
           , solve
           , solveFormula
-          , paper1
+          , contradicts
+          , satisfies
           ) where
 
 import Control.Arrow (first)
 import Data.Map (Map)
+import Data.Maybe (fromJust, listToMaybe)
 import Data.Set (Set)
-import Debug.Trace(trace, traceShow)
+--import Debug.Trace(trace, traceShow)
 
 import qualified Data.List as L
 import qualified Data.Map  as M
@@ -23,7 +29,7 @@ import qualified Data.Set  as S
 data Sat
    = SAT
    | UNSAT
-   deriving (Show)
+   deriving (Eq, Show)
 
 type Literal = Int
 type Clause = [Literal]
@@ -32,10 +38,10 @@ type Formula = [Clause]
 type LiteralTrail = [(Literal, Bool)]
 
 data Conflict = C
-   { cMap     :: Map Literal Bool -- Map of literals in conflict
-   , cPartial :: Set Literal      -- Set of literals from lower decision levels
-   , cLast    :: !Literal          -- Last asserted literal of cNot
-   , cNum     :: !Int              -- Number of literals at currentLevel of litTrail
+   { cMap     :: Map   Literal Bool -- Map of literals in conflict
+   , cPartial :: Set   Literal      -- Set of literals from lower decision levels
+   , cLast    :: Maybe Literal      -- Last asserted literal of cNot
+   , cNum     :: !Int               -- Number of literals at currentLevel of litTrail
    }
    deriving (Show)
 
@@ -77,17 +83,22 @@ falseClause ls = all (\l -> (-l) `elem` map fst ls)
 contradicts :: LiteralTrail -> Formula -> Bool
 contradicts ls = any (falseClause ls)
 
+satisfies :: LiteralTrail -> Formula -> Bool
+satisfies ls = all (any (`elem` ls'))
+  where ls' = map fst ls
+
 -- Conflict resolution
 
+-- Precondition: There is at least one conflict clause in f
 getConflictClause :: LiteralTrail -> Formula -> Clause
 getConflictClause ls = head . filter (falseClause ls)
 
 addLiteral :: State -> Literal -> State
 addLiteral s@(S _ ls c@(C cH cP _ cN) _) l
-  | M.member l cH = s
-  | otherwise     = if decisionLevel ls (-l) == currentLevel ls
-                        then s { conflict = c { cMap = cH', cNum = cN + 1 } }
-                        else s { conflict = c { cMap = cH', cPartial = S.insert l cP } }
+  | M.findWithDefault False l cH = s
+  | otherwise                    = if decisionLevel ls (-l) == currentLevel ls
+                                       then s { conflict = c { cMap = cH', cNum = cN + 1 } }
+                                       else s { conflict = c { cMap = cH', cPartial = S.insert l cP } }
   where cH' = M.insert l True cH
 
 removeLiteral :: State -> Literal -> State
@@ -98,33 +109,33 @@ removeLiteral s@(S _ ls c@(C cH cP _ cN) _) l =
   where cH' = M.insert l False cH
 
 applyConflict :: State -> State
-applyConflict s@(S f ls _ _) = findLastAssertedLiteral $ foldl addLiteral s $
-    trace ("Conflict: " ++ show conflictClause) conflictClause
+applyConflict s@(S f ls _ _) = findLastAssertedLiteral $ foldl addLiteral s' conflictClause
   where conflictClause = getConflictClause ls f
+        s' = s { conflict = C M.empty S.empty Nothing 0 }
 
 explainEmpty :: State -> State
 explainEmpty s@(S _ _ (C _ cP cL _) _)
-  | S.null $ S.insert cL cP = s
-  | otherwise      = explainEmpty $ explain s cL
+  | cL == Nothing && S.null cP = s
+  | otherwise                  = explainEmpty $ explain s $ fromJust cL
 
 explainUIP :: State -> State
 explainUIP s
   | isUIP s = s
-  | otherwise = explainUIP $ explain s $ cLast $ conflict s
+  | otherwise = explainUIP . explain s . fromJust . cLast $ conflict s
 
 isUIP :: State -> Bool
 isUIP = (== 1) . cNum . conflict
 
 explain :: State -> Literal -> State
 explain s l = _traceX $ findLastAssertedLiteral $ resolve s (getConflictReason s l) l
-  where _traceX = trace ("Explained " ++ show l ++ " by " ++ show (getConflictReason s l))
+  where _traceX = id -- trace ("Explained " ++ show l ++ " by " ++ show (getConflictReason s l))
 
 resolve :: State -> Clause -> Literal -> State
-resolve s c l = foldl addLiteral (removeLiteral s (-l)) $ S.toList . S.delete l . S.fromList $ c
+resolve s c l = foldl addLiteral (removeLiteral s (-l)) $ [l' | l' <- c, l' /= l]
 
 findLastAssertedLiteral :: State -> State
 findLastAssertedLiteral s@(S _ ls c _) = s { conflict = c { cLast = lastAsserted } }
-  where lastAsserted = head [ l | l <- reverse (map fst ls), M.findWithDefault False (-l) $ cMap c ]
+  where lastAsserted = listToMaybe [ l | l <- reverse (map fst ls), M.findWithDefault False (-l) $ cMap c ]
 
 getConflictReason :: State -> Literal -> Clause
 getConflictReason s l =
@@ -133,20 +144,23 @@ getConflictReason s l =
 setConflictReason :: State -> Literal -> Clause -> State
 setConflictReason s l c = s { reasons = M.insert l c $ reasons s }
 
+-- Precondition: cL is not Nothing
 learn :: State -> State
 learn s = _traceX $ s { formula = formula s ++ [c'] }
   where c  = conflict s
-        c' = S.toList $ S.insert (negate $ cLast c) $ cPartial c
-        _traceX = trace ("Learned " ++ show c')
+        c' = S.toList $ S.insert (negate . fromJust $ cLast c) $ cPartial c
+        _traceX = id -- trace ("Learned " ++ show c')
 
 -- Backjumping
 
+-- Precondition: cL is not Nothing
 backjump :: State -> State
-backjump s@(S _ ls (C _ cP cL _) _) = _traceX $ setConflictReason (assertLiteral s' (-cL) False) (-cL) c
-  where ls' = prefixToLevel ls $ getBackJumpLevel s
-        s'  = s { litTrail = ls', conflict = C M.empty S.empty 0 0 }
-        c   = S.toList $ S.insert (-cL) cP
-        _traceX = trace ("Backjumping: c = " ++ show c ++ " l = " ++ show cL ++ " level = " ++ show (getBackJumpLevel s))
+backjump s@(S _ ls c _) = _traceX $ setConflictReason (assertLiteral s' (-cL) False) (-cL) r
+  where (Just cL) = cLast c
+        ls' = prefixToLevel ls $ getBackJumpLevel s
+        s'  = s { litTrail = ls', conflict = C M.empty S.empty Nothing 0 }
+        r   = S.toList . S.insert (-cL) $ cPartial c
+        _traceX = id -- trace ("Backjumping: c = " ++ show c ++ " l = " ++ show cL ++ " level = " ++ show (getBackJumpLevel s))
 
 getBackJumpLevel :: State -> Int
 getBackJumpLevel (S _ ls (C _ cP _ _) _)
@@ -170,18 +184,19 @@ unitPropogate s@(S f ls _ _)   = case unitClauses of
         removeFalsifiedLits    = map (first (filter (not . (`elem` ls') . negate))) $ zip removeSatisfiedClauses removeSatisfiedClauses
         removeSatisfiedClauses = filter (not . any (`elem` ls')) f
         ls' = map fst ls
-        _traceX u r = trace ("UP: " ++ show u ++ " with reason " ++ show r)
+        _traceX = const (const id) -- trace ("UP: " ++ show u ++ " with reason " ++ show r)
 
 -- Deciding variable assignments
 
 assertLiteral :: State -> Literal -> Bool -> State
 assertLiteral state l d = state { litTrail = litTrail state ++ [(l, d)] }
 
+-- Precondition: There is at least one unassigned literal in f
 decide :: State -> State
 decide s@(S f ls _ _) = _traceX $ assertLiteral s (head unassignedVars) True
   where unassignedVars = fst . L.partition (not . (`elem` currentLits)) . vars $ f
         currentLits    = map (abs . fst) ls
-        _traceX = trace ("Decided " ++ show (head unassignedVars))
+        _traceX = id -- trace ("Decided " ++ show (head unassignedVars))
 
 -- Solver
 
@@ -189,7 +204,7 @@ solve :: State -> (LiteralTrail, Sat)
 solve s0 =
     if contradicts ls1 f1
         then if currentLevel ls2 == 0
-                 then traceShow (learn (explainEmpty s2)) ([], UNSAT)
+                 then (litTrail (learn (explainEmpty s2)), UNSAT)
                  else solve $ backjump (learn (explainUIP s2))
         else if length ls1 == length (vars f1)
                  then (ls1, SAT)
@@ -198,18 +213,4 @@ solve s0 =
         s2@(S _  ls2 _ _) = applyConflict s1
 
 solveFormula :: Formula -> (LiteralTrail, Sat)
-solveFormula = solve . \f -> S f [] (C M.empty S.empty 0 0) M.empty
-
--- Should return ([ (-6, False), (1, True), (2, False), (-3, False), (4, True), (-5, False), (7, True)], SAT)
-paper1 :: State
-paper1 = S f m (C M.empty S.empty 0 0) r
-  where f = [ [-1, 2]
-            , [-3, 4]
-            , [-1, -3, 5]
-            , [-2, -4, -5]
-            , [-2, 3, 5, -6]
-            , [-1, 3, -5, -6]
-            , [1, -6], [1, 7]
-            ]
-        m = [(6, True), (1, False), (2, False), (7, True), (3, True)]
-        r = M.fromList [ (1, [1, -6]), (2, [-1, 2])]
+solveFormula = solve . \f -> S f [] (C M.empty S.empty Nothing 0) M.empty

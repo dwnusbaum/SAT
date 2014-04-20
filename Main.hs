@@ -1,8 +1,8 @@
-{-# OPTIONS_GHC -Wall -Werror #-}
+{-# OPTIONS_GHC -Wall #-}
 
 module Main(main) where
 
 import SAT
 
 main :: IO ()
-main = print . solve $ paper1
+main = print . solveFormula $ [[1]]
