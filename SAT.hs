@@ -4,6 +4,7 @@ module SAT where
 
 import Control.Arrow (first)
 import Data.Map (Map)
+import Data.Set (Set)
 import Debug.Trace(trace, traceShow)
 
 import qualified Data.List as L
@@ -46,13 +47,11 @@ type Formula = [Clause]
 
 type LiteralTrail = [(Literal, Bool)]
 
-type IsDecision = Bool
-
 data Conflict = C
    { cMap     :: Map Literal Bool --Map of literals in conflict
-   , cPartial :: Clause  --List of literals from lower decision levels
-   , cLast    :: Literal --Last asserted literal of (map negate conflict)
-   , cNum     :: Int     --Number of literals at currentLevel of litTrail
+   , cPartial :: Set Literal      --Set of literals from lower decision levels
+   , cLast    :: Literal          --Last asserted literal of cNot
+   , cNum     :: Int              --Number of literals at currentLevel of litTrail
    }
    deriving (Show)
 
@@ -63,6 +62,11 @@ data State = S
    , reasons  :: Map Literal Clause
    }
    deriving (Show)
+
+vars :: Formula -> [Literal]
+vars = S.toList . S.unions . map (S.fromList . map abs)
+
+--Literal Trail methods
 
 decisions :: LiteralTrail -> [Literal]
 decisions = fmap fst . filter snd
@@ -90,9 +94,6 @@ prefixBeforeLastDecision :: LiteralTrail -> LiteralTrail
 prefixBeforeLastDecision ls = takeWhile ((/= l) . fst) ls
   where l = lastDecision ls
 
-vars :: Formula -> [Literal]
-vars = S.toList . S.unions . map (S.fromList . map abs)
-
 --Conflict resolution
 
 getConflictClause :: LiteralTrail -> Formula -> Clause
@@ -103,7 +104,7 @@ addLiteral s@(S _ ls c@(C cH cP _ cN) _) l = if M.notMember l cH
     then let cH' = M.insert l True cH
          in if decisionLevel ls (-l) == currentLevel ls
                 then s { conflict = c { cMap = cH', cNum = cN + 1 } }
-                else s { conflict = c { cMap = cH', cPartial = cP ++ [l] } }
+                else s { conflict = c { cMap = cH', cPartial = S.insert l cP } }
     else s
 
 removeLiteral :: State -> Literal -> State
@@ -111,11 +112,7 @@ removeLiteral s@(S _ ls c@(C cH cP _ cN) _) l =
     let cH' = M.insert l False cH
     in if decisionLevel ls (-l) == currentLevel ls
            then s { conflict = c { cMap = cH', cNum = cN - 1 } }
-           else s { conflict = c { cMap = cH', cPartial = S.toList . S.delete l . S.fromList $ cP } }
-{-
-buildC :: Conflict -> Conflict
-buildC c@(C _ cP cL _) = c { cFull = cP ++ [negate cL] }
--}
+           else s { conflict = c { cMap = cH', cPartial = S.delete l cP } }
 
 applyConflict :: State -> State
 applyConflict s@(S f ls _ _) = findLastAssertedLiteral $ foldl addLiteral s $ trace ("Conflict: " ++ show conflictClause) conflictClause
@@ -123,7 +120,7 @@ applyConflict s@(S f ls _ _) = findLastAssertedLiteral $ foldl addLiteral s $ tr
 
 explainEmpty :: State -> State
 explainEmpty s@(S _ _ (C _ cP cL _) _)
-  | null $ cL : cP = s
+  | S.null $ S.insert cL cP = s
   | otherwise      = explainEmpty $ explain s cL
 
 explainUIP :: State -> State
@@ -156,7 +153,7 @@ lastAssertedLiteral c = last . filter (`elem` c) . map fst
 learn :: State -> State
 learn s = trace ("Learned " ++ show c') $ s { formula = formula s ++ [c'] }
   where c  = conflict s
-        c' = cPartial c ++ [negate $ cLast c]
+        c' = S.toList $ S.insert (negate $ cLast c) $ cPartial c
 
 --Backjumping
 
@@ -164,12 +161,13 @@ backjump :: State -> State
 backjump s@(S _ ls (C _ cP cL _) _) = trace ("Backjumping: c = " ++ show c ++ " l = " ++ show cL ++ " level = " ++ show (getBackJumpLevel s)) $
                                       setConflictReason (assertLiteral s' (-cL) False) (-cL) c
   where ls' = prefixToLevel ls $ getBackJumpLevel s
-        s'  = s { litTrail = ls', conflict = C M.empty [] 0 0 }
-        c   = cP ++ [negate cL]
+        s'  = s { litTrail = ls', conflict = C M.empty S.empty 0 0 }
+        c   = S.toList $ S.insert (-cL) cP
 
 getBackJumpLevel :: State -> Int
-getBackJumpLevel (S _ _  (C _ [] _ _) _) = 0
-getBackJumpLevel (S _ ls (C _ cP _ _) _) = maximum $ map (decisionLevel ls . negate) cP
+getBackJumpLevel (S _ ls (C _ cP _ _) _)
+  | S.null cP = 0
+  | otherwise = S.findMax $ S.map (decisionLevel ls . negate) cP
 
 --Solver
 
@@ -183,7 +181,7 @@ satisfies :: LiteralTrail -> Formula -> Bool
 satisfies ls = all (any (`elem` ls'))
   where ls' = map fst ls
 
-assertLiteral :: State -> Literal -> IsDecision -> State
+assertLiteral :: State -> Literal -> Bool -> State
 assertLiteral state l d = state { litTrail = litTrail state ++ [(l, d)] }
 
 decide :: State -> State
@@ -223,6 +221,6 @@ solve s = let s1@(S f ls _ _) = exhaustiveUnitPropogate s in
                 else solve $ decide s1
 
 main :: IO ()
-main = print . solve . (\f -> S f m (C M.empty [] 0 0) r) $ [[-1,2], [-3,4], [-1,-3,5], [-2,-4,-5], [-2,3,5,-6], [-1,3,-5,-6], [1,-6], [1,7]]
+main = print . solve . (\f -> S f m (C M.empty S.empty 0 0) r) $ [[-1,2], [-3,4], [-1,-3,5], [-2,-4,-5], [-2,3,5,-6], [-1,3,-5,-6], [1,-6], [1,7]]
   where m = [(6, True), (1, False), (2, False), (7, True), (3, True)]
         r = M.fromList [ (1, [1,-6]), (2, [-1,2])]
