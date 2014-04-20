@@ -1,4 +1,4 @@
-{-# OPTIONS_GHC -Wall #-}
+{-# OPTIONS_GHC -Wall -Werror #-}
 
 -- Implemented from http://poincare.matf.bg.ac.rs/~filip/phd/sat-tutorial.pdf
 -- This solver uses techniques through v.4 of the sovler in that paper
@@ -34,14 +34,14 @@ type LiteralTrail = [(Literal, Bool)]
 data Conflict = C
    { cMap     :: Map Literal Bool -- Map of literals in conflict
    , cPartial :: Set Literal      -- Set of literals from lower decision levels
-   , cLast    :: Literal          -- Last asserted literal of cNot
-   , cNum     :: Int              -- Number of literals at currentLevel of litTrail
+   , cLast    :: !Literal          -- Last asserted literal of cNot
+   , cNum     :: !Int              -- Number of literals at currentLevel of litTrail
    }
    deriving (Show)
 
 data State = S
-   { formula  :: Formula
-   , litTrail :: LiteralTrail
+   { formula  :: !Formula
+   , litTrail :: !LiteralTrail
    , conflict :: Conflict
    , reasons  :: Map Literal Clause
    }
@@ -83,12 +83,12 @@ getConflictClause :: LiteralTrail -> Formula -> Clause
 getConflictClause ls = head . filter (falseClause ls)
 
 addLiteral :: State -> Literal -> State
-addLiteral s@(S _ ls c@(C cH cP _ cN) _) l = if M.notMember l cH
-    then let cH' = M.insert l True cH
-         in if decisionLevel ls (-l) == currentLevel ls
-                then s { conflict = c { cMap = cH', cNum = cN + 1 } }
-                else s { conflict = c { cMap = cH', cPartial = S.insert l cP } }
-    else s
+addLiteral s@(S _ ls c@(C cH cP _ cN) _) l
+  | M.member l cH = s
+  | otherwise     = if decisionLevel ls (-l) == currentLevel ls
+                        then s { conflict = c { cMap = cH', cNum = cN + 1 } }
+                        else s { conflict = c { cMap = cH', cPartial = S.insert l cP } }
+  where cH' = M.insert l True cH
 
 removeLiteral :: State -> Literal -> State
 removeLiteral s@(S _ ls c@(C cH cP _ cN) _) l =
@@ -108,8 +108,9 @@ explainEmpty s@(S _ _ (C _ cP cL _) _)
   | otherwise      = explainEmpty $ explain s cL
 
 explainUIP :: State -> State
-explainUIP s = if not $ isUIP s then explainUIP $ explain s cL else s
-  where cL = cLast $ conflict s
+explainUIP s
+  | isUIP s = s
+  | otherwise = explainUIP $ explain s $ cLast $ conflict s
 
 isUIP :: State -> Bool
 isUIP = (== 1) . cNum . conflict
@@ -155,9 +156,11 @@ getBackJumpLevel (S _ ls (C _ cP _ _) _)
 -- Unit Propogation
 
 exhaustiveUnitPropogate :: State -> State
-exhaustiveUnitPropogate s = let (s'@(S f ls _ _), b) = unitPropogate s in if contradicts ls f || not b
-    then s'
-    else exhaustiveUnitPropogate s'
+exhaustiveUnitPropogate s0
+  | contradicts ls1 f1 = s1
+  | not b              = s1
+  | otherwise          = exhaustiveUnitPropogate s1
+  where (s1@(S f1 ls1 _ _), b) = unitPropogate s0
 
 unitPropogate :: State -> (State, Bool)
 unitPropogate s@(S f ls _ _)   = case unitClauses of
@@ -183,13 +186,14 @@ decide s@(S f ls _ _) = _traceX $ assertLiteral s (head unassignedVars) True
 -- Solver
 
 solve :: State -> (LiteralTrail, Sat)
-solve s0 = if contradicts ls1 f1
-    then if currentLevel ls2 == 0
-            then traceShow (learn (explainEmpty s2)) ([], UNSAT)
-            else solve $ backjump (learn (explainUIP s2))
-    else if length ls1 == length (vars f1)
-            then (ls1, SAT)
-            else solve $ decide s1
+solve s0 =
+    if contradicts ls1 f1
+        then if currentLevel ls2 == 0
+                 then traceShow (learn (explainEmpty s2)) ([], UNSAT)
+                 else solve $ backjump (learn (explainUIP s2))
+        else if length ls1 == length (vars f1)
+                 then (ls1, SAT)
+                 else solve $ decide s1
   where s1@(S f1 ls1 _ _) = exhaustiveUnitPropogate s0
         s2@(S _  ls2 _ _) = applyConflict s1
 
@@ -209,7 +213,3 @@ paper1 = S f m (C M.empty S.empty 0 0) r
             ]
         m = [(6, True), (1, False), (2, False), (7, True), (3, True)]
         r = M.fromList [ (1, [1, -6]), (2, [-1, 2])]
-
-main :: IO ()
-main = print . solve $ paper1
-
