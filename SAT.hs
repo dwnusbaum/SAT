@@ -1,6 +1,9 @@
 {-# OPTIONS_GHC -Wall #-}
 
-module SAT where
+-- Implemented from http://poincare.matf.bg.ac.rs/~filip/phd/sat-tutorial.pdf
+-- This solver uses techniques through v.4 of the sovler in that paper
+
+module SAT(Sat, solveFormula) where
 
 import Control.Arrow (first)
 import Data.Map (Map)
@@ -10,30 +13,6 @@ import Debug.Trace(trace, traceShow)
 import qualified Data.List as L
 import qualified Data.Map  as M
 import qualified Data.Set  as S
-
-{-
-input: Boolean formula ϕ
-output: Sat or Unsat
-begin
-    α := {}
-    M := ObtainXorMatrix(ϕ);
-    repeat
-        (status, α) := PropagateUnitImplication(ϕ, α);
-        if status = conﬂict
-            if conﬂict at top decision level
-               return Unsat;
-            ϕ := AnalyzeConﬂict&AddLearntClause(ϕ, α);
-            α := Backtrack(ϕ, α);
-        else
-            if all variables assigned
-                return Sat;
-            (status, ®) := Xorplex(M, α);
-            if status = propagation or conﬂict
-                ϕ := AddXorImplicationConﬂictClause(ϕ, M, α);
-                continue;
-        α := Decide(ϕ, α);
-end
--}
 
 data Sat
    = SAT
@@ -71,9 +50,6 @@ vars = S.toList . S.unions . map (S.fromList . map abs)
 decisions :: LiteralTrail -> [Literal]
 decisions = fmap fst . filter snd
 
-lastDecision :: LiteralTrail -> Literal
-lastDecision = last . decisions
-
 decisionsTo :: LiteralTrail -> Literal -> [Literal]
 decisionsTo []          _ = []
 decisionsTo ((x, b):xs) l
@@ -90,19 +66,11 @@ decisionLevel ls = length . decisionsTo ls
 prefixToLevel :: LiteralTrail -> Int -> LiteralTrail
 prefixToLevel ls i = takeWhile (\(l, _) -> decisionLevel ls l <= i) ls
 
-prefixBeforeLastDecision :: LiteralTrail -> LiteralTrail
-prefixBeforeLastDecision ls = takeWhile ((/= l) . fst) ls
-  where l = lastDecision ls
-
 falseClause :: LiteralTrail -> Clause -> Bool
 falseClause ls = all (\l -> (-l) `elem` map fst ls)
 
 contradicts :: LiteralTrail -> Formula -> Bool
 contradicts ls = any (falseClause ls)
-
-satisfies :: LiteralTrail -> Formula -> Bool
-satisfies ls = all (any (`elem` ls'))
-  where ls' = map fst ls
 
 -- Conflict resolution
 
@@ -220,7 +188,10 @@ solve s = let s1@(S f ls _ _) = exhaustiveUnitPropogate s in
                 then (ls, SAT)
                 else solve $ decide s1
 
--- Should return ([(-6,False),(1,True),(2,False),(-3,False),(4,True),(-5,False),(7,True)],SAT)
+solveFormula :: Formula -> (LiteralTrail, Sat)
+solveFormula = solve . \f -> S f [] (C M.empty S.empty 0 0) M.empty
+
+-- Should return ([ (-6, False), (1, True), (2, False), (-3, False), (4, True), (-5, False), (7, True)], SAT)
 paper1 :: State
 paper1 = S f m (C M.empty S.empty 0 0) r
   where f = [ [-1, 2]
