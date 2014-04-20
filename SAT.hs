@@ -23,7 +23,6 @@ import qualified Data.Set  as S
 data Sat
    = SAT
    | UNSAT
-   | UNDEF
    deriving (Show)
 
 type Literal = Int
@@ -184,15 +183,15 @@ decide s@(S f ls _ _) = _traceX $ assertLiteral s (head unassignedVars) True
 -- Solver
 
 solve :: State -> (LiteralTrail, Sat)
-solve s = let s1@(S f ls _ _) = exhaustiveUnitPropogate s in
-    if contradicts ls f
-        then let s2@(S _ ls' _ _) = applyConflict s1 in
-             if currentLevel ls' == 0
-                then traceShow (learn (explainEmpty s2)) ([], UNSAT)
-                else solve $ backjump (learn (explainUIP s2))
-        else if length ls == length (vars f)
-                then (ls, SAT)
-                else solve $ decide s1
+solve s0 = if contradicts ls1 f1
+    then if currentLevel ls2 == 0
+            then traceShow (learn (explainEmpty s2)) ([], UNSAT)
+            else solve $ backjump (learn (explainUIP s2))
+    else if length ls1 == length (vars f1)
+            then (ls1, SAT)
+            else solve $ decide s1
+  where s1@(S f1 ls1 _ _) = exhaustiveUnitPropogate s0
+        s2@(S _  ls2 _ _) = applyConflict s1
 
 solveFormula :: Formula -> (LiteralTrail, Sat)
 solveFormula = solve . \f -> S f [] (C M.empty S.empty 0 0) M.empty
