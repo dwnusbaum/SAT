@@ -3,55 +3,21 @@
 -- Implemented from http://poincare.matf.bg.ac.rs/~filip/phd/sat-tutorial.pdf
 -- This solver uses techniques through v.4 of the sovler in that paper
 
-module SAT( Sat(..)
-          , State(..)
-          , Conflict(..)
-          , LiteralTrail
-          , Formula
-          , Clause
-          , Literal
-          , solve
-          , solveFormula
-          , contradicts
-          , satisfies
-          ) where
+module SAT ( solve
+           , solveFormula
+           , contradicts
+           , satisfies
+           ) where
 
 import Control.Arrow (first)
-import Data.Map (Map)
-import Data.Maybe (fromJust, listToMaybe)
-import Data.Set (Set)
+import Data.Maybe    (fromJust, isNothing, listToMaybe)
 --import Debug.Trace(trace, traceShow)
 
 import qualified Data.List as L
 import qualified Data.Map  as M
 import qualified Data.Set  as S
 
-data Sat
-   = SAT
-   | UNSAT
-   deriving (Eq, Show)
-
-type Literal = Int
-type Clause = [Literal]
-type Formula = [Clause]
-
-type LiteralTrail = [(Literal, Bool)]
-
-data Conflict = C
-   { cMap     :: Map   Literal Bool -- Map of literals in conflict
-   , cPartial :: Set   Literal      -- Set of literals from lower decision levels
-   , cLast    :: Maybe Literal      -- Last asserted literal of cNot
-   , cNum     :: !Int               -- Number of literals at currentLevel of litTrail
-   }
-   deriving (Show)
-
-data State = S
-   { formula  :: !Formula
-   , litTrail :: !LiteralTrail
-   , conflict :: Conflict
-   , reasons  :: Map Literal Clause
-   }
-   deriving (Show)
+import Types
 
 vars :: Formula -> [Literal]
 vars = S.toList . S.unions . map (S.fromList . map abs)
@@ -115,8 +81,8 @@ applyConflict s@(S f ls _ _) = findLastAssertedLiteral $ foldl addLiteral s' con
 
 explainEmpty :: State -> State
 explainEmpty s@(S _ _ (C _ cP cL _) _)
-  | cL == Nothing && S.null cP = s
-  | otherwise                  = explainEmpty $ explain s $ fromJust cL
+  | isNothing cL && S.null cP = s
+  | otherwise                 = explainEmpty $ explain s $ fromJust cL
 
 explainUIP :: State -> State
 explainUIP s
@@ -131,7 +97,7 @@ explain s l = _traceX $ findLastAssertedLiteral $ resolve s (getConflictReason s
   where _traceX = id -- trace ("Explained " ++ show l ++ " by " ++ show (getConflictReason s l))
 
 resolve :: State -> Clause -> Literal -> State
-resolve s c l = foldl addLiteral (removeLiteral s (-l)) $ [l' | l' <- c, l' /= l]
+resolve s c l = foldl addLiteral (removeLiteral s (-l)) [l' | l' <- c, l' /= l]
 
 findLastAssertedLiteral :: State -> State
 findLastAssertedLiteral s@(S _ ls c _) = s { conflict = c { cLast = lastAsserted } }
@@ -200,7 +166,7 @@ decide s@(S f ls _ _) = _traceX $ assertLiteral s (head unassignedVars) True
 
 -- Solver
 
-solve :: State -> (LiteralTrail, Sat)
+solve :: State -> (LiteralTrail, SAT)
 solve s0 =
     if contradicts ls1 f1
         then if currentLevel ls2 == 0
@@ -212,5 +178,5 @@ solve s0 =
   where s1@(S f1 ls1 _ _) = exhaustiveUnitPropogate s0
         s2@(S _  ls2 _ _) = applyConflict s1
 
-solveFormula :: Formula -> (LiteralTrail, Sat)
+solveFormula :: Formula -> (LiteralTrail, SAT)
 solveFormula = solve . \f -> S f [] (C M.empty S.empty Nothing 0) M.empty
