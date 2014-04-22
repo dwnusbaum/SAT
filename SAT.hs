@@ -11,16 +11,16 @@ module SAT ( solve
 
 import Control.Arrow (first)
 import Data.Maybe    (fromJust, isNothing, listToMaybe)
+import Data.Set      (Set)
 --import Debug.Trace(trace, traceShow)
 
-import qualified Data.List as L (partition)
 import qualified Data.Map  as M (empty, findWithDefault, insert)
-import qualified Data.Set  as S (delete, empty, findMax, fromList, insert, map, null, toList, unions)
+import qualified Data.Set  as S (delete, empty, findMax, findMin, insert, map, member, null, partition, size, toList)
 
 import Types
 
-vars :: Formula -> [Literal]
-vars = S.toList . S.unions . map (S.fromList . map abs)
+vars :: Formula -> Set Literal
+vars = foldl (\st l -> S.insert (abs l) st) S.empty . concat
 
 -- Literal Trail methods
 
@@ -159,9 +159,9 @@ assertLiteral state l d = state { litTrail = litTrail state ++ [(l, d)] }
 
 -- Precondition: There is at least one unassigned literal in f
 decide :: State -> State
-decide s@(S f ls _ _) = _traceX $ assertLiteral s (head unassignedVars) True
-  where unassignedVars = fst . L.partition (not . (`elem` currentLits)) . vars $ f
-        currentLits    = map (abs . fst) ls
+decide s@(S f ls _ _) = _traceX $ assertLiteral s fstUnassigned True
+  where fstUnassigned = S.findMin . fst . S.partition (not . (flip S.member currentLits)) . vars $ f -- we really want S.elemAt 0
+        currentLits   = foldl (\st l -> S.insert (abs . fst $ l) st) S.empty ls
         _traceX = id -- trace ("Decided " ++ show (head unassignedVars))
 
 -- Solver
@@ -172,7 +172,7 @@ solve s0 =
         then if currentLevel ls2 == 0
                  then (litTrail (learn (explainEmpty s2)), UNSAT)
                  else solve $ backjump (learn (explainUIP s2))
-        else if length ls1 == length (vars f1)
+        else if length ls1 == S.size (vars f1)
                  then (ls1, SAT)
                  else solve $ decide s1
   where s1@(S f1 ls1 _ _) = exhaustiveUnitPropogate s0
