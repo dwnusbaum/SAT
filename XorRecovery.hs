@@ -7,7 +7,7 @@ module XorRecovery ( recoverXorClauses
 import Data.Set (Set)
 
 import qualified Data.Foldable as F (any)
-import qualified Data.Set as S
+import qualified Data.Set      as S (empty, filter, fromList, insert, map, member, size, toList, (\\))
 
 import Types
 
@@ -68,7 +68,7 @@ findLastClause    (SR (t:ts) sd is fs) sc@(SC vs _)
         testClauses xs [    ] = [xs]
         testClauses xs (y:ys) = testClauses (xs ++ [y]) ys ++ testClauses (xs ++ [-y]) ys
 
-matches :: SearchClause -> S.Set (S.Set Literal) -> Clause -> Bool
+matches :: SearchClause -> Set (Set Literal) -> Clause -> Bool
 matches sc usedClauses newClause = signsMatch && varsMatch && not usedAlready
   where signsMatch  = isPosSign sc == isPositiveSign newClause
         varsMatch   = vars      sc == S.fromList (map abs newClause)

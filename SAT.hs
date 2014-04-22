@@ -13,9 +13,9 @@ import Control.Arrow (first)
 import Data.Maybe    (fromJust, isNothing, listToMaybe)
 --import Debug.Trace(trace, traceShow)
 
-import qualified Data.List as L
-import qualified Data.Map  as M
-import qualified Data.Set  as S
+import qualified Data.List as L (partition)
+import qualified Data.Map  as M (empty, findWithDefault, insert)
+import qualified Data.Set  as S (delete, empty, findMax, fromList, insert, map, null, toList, unions)
 
 import Types
 
