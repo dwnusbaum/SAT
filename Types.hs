@@ -26,13 +26,13 @@ data Conflict = C
    { cMap     :: Map   Literal Bool -- Map of literals in conflict
    , cPartial :: Set   Literal      -- Set of literals from lower decision levels
    , cLast    :: Maybe Literal      -- Last asserted literal of cNot
-   , cNum     :: !Int               -- Number of literals at currentLevel of litTrail
+   , cNum     :: Int                -- Number of literals at currentLevel of litTrail
    }
    deriving (Show)
 
 data State = S
-   { formula  :: !Formula
-   , litTrail :: !LiteralTrail
+   { formula  :: Formula
+   , litTrail :: LiteralTrail
    , conflict :: Conflict
    , reasons  :: Map Literal Clause
    }

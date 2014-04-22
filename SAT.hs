@@ -12,7 +12,6 @@ module SAT ( solve
 import Control.Arrow (first)
 import Data.Maybe    (fromJust, isNothing, listToMaybe)
 import Data.Set      (Set)
---import Debug.Trace(trace, traceShow)
 
 import qualified Data.Map  as M (empty, findWithDefault, insert)
 import qualified Data.Set  as S (delete, empty, findMax, findMin, insert, map, member, null, partition, size, toList)
@@ -93,15 +92,14 @@ isUIP :: State -> Bool
 isUIP = (== 1) . cNum . conflict
 
 explain :: State -> Literal -> State
-explain s l = _traceX $ findLastAssertedLiteral $ resolve s (getConflictReason s l) l
-  where _traceX = id -- trace ("Explained " ++ show l ++ " by " ++ show (getConflictReason s l))
+explain s l = findLastAssertedLiteral $ resolve s (getConflictReason s l) l
 
 resolve :: State -> Clause -> Literal -> State
 resolve s c l = foldl addLiteral (removeLiteral s (-l)) [l' | l' <- c, l' /= l]
 
 findLastAssertedLiteral :: State -> State
 findLastAssertedLiteral s@(S _ ls c _) = s { conflict = c { cLast = lastAsserted } }
-  where lastAsserted = listToMaybe [ l | l <- reverse (map fst ls), M.findWithDefault False (-l) $ cMap c ]
+  where lastAsserted = listToMaybe [ l | l <- foldl (\st l' -> fst l' : st) [] ls, M.findWithDefault False (-l) $ cMap c ]
 
 getConflictReason :: State -> Literal -> Clause
 getConflictReason s l =
@@ -112,21 +110,19 @@ setConflictReason s l c = s { reasons = M.insert l c $ reasons s }
 
 -- Precondition: cL is not Nothing
 learn :: State -> State
-learn s = _traceX $ s { formula = formula s ++ [c'] }
+learn s = s { formula = formula s ++ [c'] }
   where c  = conflict s
         c' = S.toList $ S.insert (negate . fromJust $ cLast c) $ cPartial c
-        _traceX = id -- trace ("Learned " ++ show c')
 
 -- Backjumping
 
 -- Precondition: cL is not Nothing
 backjump :: State -> State
-backjump s@(S _ ls c _) = _traceX $ setConflictReason (assertLiteral s' (-cL) False) (-cL) r
+backjump s@(S _ ls c _) = setConflictReason (assertLiteral s' (-cL) False) (-cL) r
   where (Just cL) = cLast c
         ls' = prefixToLevel ls $ getBackJumpLevel s
         s'  = s { litTrail = ls', conflict = C M.empty S.empty Nothing 0 }
         r   = S.toList . S.insert (-cL) $ cPartial c
-        _traceX = id -- trace ("Backjumping: c = " ++ show c ++ " l = " ++ show cL ++ " level = " ++ show (getBackJumpLevel s))
 
 getBackJumpLevel :: State -> Int
 getBackJumpLevel (S _ ls (C _ cP _ _) _)
@@ -145,12 +141,11 @@ exhaustiveUnitPropogate s0
 unitPropogate :: State -> (State, Bool)
 unitPropogate s@(S f ls _ _)   = case unitClauses of
     []       -> (s, False)
-    (u, r):_ -> _traceX u r (setConflictReason (assertLiteral s u False) u r, True)
+    (u, r):_ -> (setConflictReason (assertLiteral s u False) u r, True)
   where unitClauses            = map (first head) $ filter ((== 1) . length . fst) removeFalsifiedLits
         removeFalsifiedLits    = map (first (filter (not . (`elem` ls') . negate))) $ zip removeSatisfiedClauses removeSatisfiedClauses
         removeSatisfiedClauses = filter (not . any (`elem` ls')) f
         ls' = map fst ls
-        _traceX = const (const id) -- trace ("UP: " ++ show u ++ " with reason " ++ show r)
 
 -- Deciding variable assignments
 
@@ -159,10 +154,9 @@ assertLiteral state l d = state { litTrail = litTrail state ++ [(l, d)] }
 
 -- Precondition: There is at least one unassigned literal in f
 decide :: State -> State
-decide s@(S f ls _ _) = _traceX $ assertLiteral s fstUnassigned True
+decide s@(S f ls _ _) = assertLiteral s fstUnassigned True
   where fstUnassigned = S.findMin . fst . S.partition (not . (flip S.member currentLits)) . vars $ f -- we really want S.elemAt 0
         currentLits   = foldl (\st l -> S.insert (abs . fst $ l) st) S.empty ls
-        _traceX = id -- trace ("Decided " ++ show (head unassignedVars))
 
 -- Solver
 
