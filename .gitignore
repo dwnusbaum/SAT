@@ -2,6 +2,7 @@ dist
 cabal-dev
 *.o
 *.hi
+*.hp
 *.chi
 *.chs.h
 .virtualenv
@@ -11,3 +12,4 @@ cabal.sandbox.config
 cabal.config
 SatMicro.hs
 Tests.hs
+Main
