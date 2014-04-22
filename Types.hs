@@ -8,8 +8,8 @@ module Types ( SAT (..)
              , XorEquation(..)
              ) where
 
-import Data.Map (Map)
-import Data.Set (Set)
+import Data.Map.Strict (Map)
+import Data.Set        (Set)
 
 data SAT
    = SAT
@@ -23,8 +23,8 @@ type Formula = [Clause]
 type LiteralTrail = [(Literal, Bool)]
 
 data Conflict = C
-   { cMap     :: Map   Literal Bool -- Map of literals in conflict
-   , cPartial :: Set   Literal      -- Set of literals from lower decision levels
+   { cMap     :: Map Literal Bool   -- Map of literals in conflict
+   , cPartial :: Set Literal        -- Set of literals from lower decision levels
    , cLast    :: Maybe Literal      -- Last asserted literal of cNot
    , cNum     :: Int                -- Number of literals at currentLevel of litTrail
    }
@@ -32,6 +32,7 @@ data Conflict = C
 
 data State = S
    { formula  :: Formula
+   , uniques  :: Set Literal
    , litTrail :: LiteralTrail
    , conflict :: Conflict
    , reasons  :: Map Literal Clause

@@ -5,6 +5,9 @@ cabal-dev
 *.hp
 *.chi
 *.chs.h
+*.prof
+*.aux
+*.ps
 .virtualenv
 .hsenv
 .cabal-sandbox/
@@ -12,4 +15,3 @@ cabal.sandbox.config
 cabal.config
 SatMicro.hs
 Tests.hs
-Main
