@@ -5,6 +5,7 @@ module Types ( SAT (..)
              , Formula
              , Clause
              , Literal
+             , XorEquation(..)
              ) where
 
 import Data.Map (Map)
@@ -36,3 +37,8 @@ data State = S
    , reasons  :: Map Literal Clause
    }
    deriving (Show)
+
+data XorEquation = XEq Clause Bool
+
+instance Show XorEquation where
+    show (XEq c b) = "[" ++ unwords (map show c) ++ " | " ++ show b ++ "]"
