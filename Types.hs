@@ -1,7 +1,7 @@
 module Types ( SAT (..)
              , State (..)
              , Conflict (..)
-             , LiteralTrail
+             , LiteralTrail(..)
              , Formula
              , Clause
              , Literal
@@ -20,7 +20,11 @@ type Literal = Int
 type Clause  = [Literal]
 type Formula = [Clause]
 
-type LiteralTrail = [(Literal, Bool)]
+data LiteralTrail = T
+   { litList :: [(Literal, Bool)]
+   , litSet  :: Set Literal -- S.fromList $ map fst decisions == varsInTrail
+   }
+   deriving (Show)
 
 data Conflict = C
    { cMap     :: Map Literal Bool   -- Map of literals in conflict
