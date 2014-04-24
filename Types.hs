@@ -16,6 +16,7 @@ import Data.Set        (Set)
 data SAT
    = SAT
    | UNSAT
+   | UNDEF
    deriving (Eq, Show)
 
 type Literal = Int
@@ -37,11 +38,12 @@ data Conflict = C
    deriving (Show)
 
 data State = S
-   { formula  :: Formula
-   , uniques  :: Set Literal
-   , litTrail :: LiteralTrail
-   , conflict :: Conflict
-   , reasons  :: Map Literal Clause
+   { formula    :: Formula
+   , unitsQueue :: Clause
+   , litTrail   :: LiteralTrail
+   , conflict   :: Conflict
+   , reasons    :: Map Literal Clause
+   , variables  :: Set Literal
    }
    deriving (Show)
 
