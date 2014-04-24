@@ -13,16 +13,17 @@ import Control.Arrow (first)
 import Data.Maybe    (fromJust, isNothing, listToMaybe)
 import Data.Set      (Set)
 
-import qualified Data.List       as L (foldl', partition)
+import qualified Data.Foldable   as F (foldl')
+import qualified Data.List       as L (partition)
 import qualified Data.Map.Strict as M (empty, findWithDefault, insert)
-import qualified Data.Set        as S (delete, elemAt, empty, findMax, insert, map, member, notMember, null, partition, size, toList)
+import qualified Data.Set        as S (delete, elemAt, empty, filter, findMax, insert, map, member, notMember, null, size, toList)
 
 import Types
 
 -- Literal Trail methods
 
-decisions :: LiteralTrail -> [Literal]
-decisions = fmap fst . filter snd . litList
+decisions :: LiteralTrail -> [(Literal, Bool)]
+decisions = filter snd . litList
 
 decisionsTo :: LiteralTrail -> Literal -> [Literal]
 decisionsTo (T ls _) l  = decisionsTo' ls
@@ -39,7 +40,7 @@ decisionLevel :: LiteralTrail -> Literal -> Int
 decisionLevel ls = length . decisionsTo ls
 
 prefixToLevel :: LiteralTrail -> Int -> LiteralTrail
-prefixToLevel t@(T ls vs) i = T ns $ L.foldl' (\st (x, _) -> S.delete x st) vs rs
+prefixToLevel t@(T ls vs) i = T ns $ F.foldl' (\st (x, _) -> S.delete x st) vs rs
   where (ns, rs) = L.partition (\(l, _) -> decisionLevel t l <= i) ls
 
 falseClause :: Set Literal -> Clause -> Bool
@@ -73,7 +74,7 @@ removeLiteral s@(S _ _ ls c@(C cH cP _ cN) _) l =
   where cH' = M.insert l False cH
 
 applyConflict :: State -> State
-applyConflict s@(S f _ ls _ _) = findLastAssertedLiteral $ L.foldl' addLiteral s' conflictClause
+applyConflict s@(S f _ ls _ _) = findLastAssertedLiteral $ F.foldl' addLiteral s' conflictClause
   where conflictClause = getConflictClause ls f
         s' = s { conflict = C M.empty S.empty Nothing 0 }
 
@@ -94,11 +95,11 @@ explain :: State -> Literal -> State
 explain s l = findLastAssertedLiteral $ resolve s (getConflictReason s l) l
 
 resolve :: State -> Clause -> Literal -> State
-resolve s c l = L.foldl' addLiteral (removeLiteral s (-l)) [l' | l' <- c, l' /= l]
+resolve s c l = F.foldl' addLiteral (removeLiteral s (-l)) [l' | l' <- c, l' /= l]
 
 findLastAssertedLiteral :: State -> State
 findLastAssertedLiteral s@(S _ _ (T ls _) c _) = s { conflict = c { cLast = lastAsserted } }
-  where lastAsserted = listToMaybe [ l | l <- L.foldl' (\st l' -> fst l' : st) [] ls, M.findWithDefault False (-l) $ cMap c ]
+  where lastAsserted = listToMaybe [ l | l <- F.foldl' (\st l' -> fst l' : st) [] ls, M.findWithDefault False (-l) $ cMap c ]
 
 getConflictReason :: State -> Literal -> Clause
 getConflictReason s l =
@@ -109,7 +110,7 @@ setConflictReason s l c = s { reasons = M.insert l c $ reasons s }
 
 -- Precondition: cL is not Nothing
 learn :: State -> State
-learn s = s { formula = formula s ++ [c'] }
+learn s = s { formula = c' : formula s } -- Does it matter if this is formula s ++ [c'] or consed?
   where c  = conflict s
         c' = S.toList $ S.insert (negate . fromJust $ cLast c) $ cPartial c
 
@@ -139,43 +140,43 @@ exhaustiveUnitPropogate s0
   where (s1@(S f1 _ ls1 _ _), b) = unitPropogate s0
 
 unitPropogate :: State -> (State, Bool)
-unitPropogate s@(S f _ (T _ vs) _ _) = case unitLitsAndClauses of
-    []       -> (s, False)
-    (u, r):_ -> (setConflictReason (assertLiteral s u False) u r, True)
-  where unitLitsAndClauses     = map (first head) $ filter (lengthEq1 . fst) removeFalsifiedLits
-        removeFalsifiedLits    = map (first (filter (\l -> S.notMember (-l) vs))) $ zip removeSatisfiedClauses removeSatisfiedClauses
+unitPropogate s@(S f _ (T _ vs) _ _) = case fmap (first head) mFirstUnitClause of
+    Nothing     -> (s, False)
+    Just (u, r) -> (setConflictReason (assertLiteral s u False) u r, True)
+  where mFirstUnitClause       = listToMaybe . filter (lengthEq1 . fst) $ zip removeFalsifiedLits removeSatisfiedClauses
+        removeFalsifiedLits    = map (filter (\l -> S.notMember (-l) vs)) removeSatisfiedClauses
         removeSatisfiedClauses = filter (not . any (`S.member` vs)) f
 
 lengthEq1 :: [a] -> Bool
 lengthEq1 (_:[]) = True
-lengthEq1 _      = False
+lengthEq1  _     = False
 
 -- Deciding variable assignments
 
 assertLiteral :: State -> Literal -> Bool -> State
-assertLiteral s@(S _ _ t@(T ls vs) _ _) l d = s { litTrail = t' }
-  where t' = t { litList = ls ++ [(l, d)], litSet = S.insert l vs }
+assertLiteral s@(S _ _ (T ls vs) _ _) l d = s { litTrail = t' }
+  where t' = T (ls ++ [(l, d)]) $ S.insert l vs
 
 -- Precondition: There is at least one unassigned literal in f
 decide :: State -> State
 decide s@(S _ us ls _ _) = assertLiteral s fstUnassigned True
-  where fstUnassigned = S.elemAt 0 . fst . S.partition (not . (`S.member` currentLits)) $ us
+  where fstUnassigned = S.elemAt 0 . S.filter (`S.notMember` currentLits) $ us
         currentLits   = S.map abs $ litSet ls
 
 -- Solver
 
-solve :: State -> (LiteralTrail, SAT)
+solve :: State -> (Set Literal, SAT)
 solve s0 =
     if contradicts ls1 f1
         then if currentLevel ls2 == 0
-                 then (litTrail (learn (explainEmpty s2)), UNSAT)
+                 then (litSet $ litTrail (learn (explainEmpty s2)), UNSAT)
                  else solve $ backjump (learn (explainUIP s2))
         else if S.size (litSet ls1) == S.size u1
-                 then (ls1, SAT)
+                 then (litSet ls1, SAT)
                  else solve $ decide s1
   where s1@(S f1 u1 ls1 _ _) = exhaustiveUnitPropogate s0
         s2@(S _  _  ls2 _ _) = applyConflict s1
 
-solveFormula :: Formula -> (LiteralTrail, SAT)
+solveFormula :: Formula -> (Set Literal, SAT)
 solveFormula = solve . \f -> S f (uniqueVars f) (T [] S.empty) (C M.empty S.empty Nothing 0) M.empty
-  where uniqueVars = L.foldl' (\st l -> S.insert (abs l) st) S.empty . concat
+  where uniqueVars = F.foldl' (\st l -> S.insert (abs l) st) S.empty . concat

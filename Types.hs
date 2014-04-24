@@ -1,3 +1,5 @@
+{-# OPTIONS_GHC -Wall #-}
+
 module Types ( SAT (..)
              , State (..)
              , Conflict (..)
@@ -22,7 +24,7 @@ type Formula = [Clause]
 
 data LiteralTrail = T
    { litList :: [(Literal, Bool)]
-   , litSet  :: Set Literal -- S.fromList $ map fst decisions == varsInTrail
+   , litSet  :: Set Literal -- S.fromList $ map fst listList == litList
    }
    deriving (Show)
 
