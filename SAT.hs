@@ -12,7 +12,7 @@ import Control.Arrow (first)
 import Data.Maybe    (fromJust, isNothing, listToMaybe)
 import Data.Set      (Set)
 
-import qualified Data.Foldable   as F (any, foldl, foldl')
+import qualified Data.Foldable   as F (any, foldl', foldr)
 import qualified Data.List       as L (partition)
 import qualified Data.Map.Strict as M (empty, findWithDefault, insert)
 import qualified Data.Set        as S (delete, elemAt, empty, filter, findMax, fromList, insert, map, member, notMember, null, size, toList)
@@ -26,12 +26,6 @@ decisions = filter snd . litList
 
 decisionsTo :: LiteralTrail -> Literal -> [(Literal, Bool)]
 decisionsTo (T ls _) l = filter snd . dropWhile ((/= l) . fst) $ ls
-  {- decisionsTo' ls
-  where decisionsTo' [         ] = []
-        decisionsTo' ((x, b):xs)
-          | x == l    = [l | b] -- If b is true, then [l], else []
-          | b         = x : decisionsTo' xs
-          | otherwise = decisionsTo' xs -}
 
 currentLevel :: LiteralTrail -> Int
 currentLevel = length . decisions
@@ -40,7 +34,7 @@ decisionLevel :: LiteralTrail -> Literal -> Int
 decisionLevel ls = length . decisionsTo ls
 
 prefixToLevel :: LiteralTrail -> Int -> LiteralTrail
-prefixToLevel t@(T ls vs) i = T ns $ F.foldl' (\st (x, _) -> S.delete x st) vs rs
+prefixToLevel t@(T ls ms) i = T ns $ F.foldl' (\st (x, _) -> S.delete x st) ms rs
   where (ns, rs) = L.partition (\(l, _) -> decisionLevel t l <= i) ls
 
 falseClause :: Set Literal -> Clause -> Bool
@@ -56,17 +50,15 @@ satisfies (T _ ms) = all (any (`S.member` ms))
 
 -- Precondition: There is at least one conflict clause in f
 getConflictClause :: LiteralTrail -> Formula -> Clause
-getConflictClause (T _ vs) = head . filter (falseClause vs)
+getConflictClause (T _ ms) = head . filter (falseClause ms)
 
 addLiteral :: State -> Literal -> State
 addLiteral s@(S _ _ ls c@(C cH cP _ cN) _ _) l
   | M.findWithDefault False l cH = s
-  | lNotLevel == 0               = s
-  | otherwise                    = if lNotLevel == currentLevel ls
+  | otherwise                    = if decisionLevel ls (-l) == currentLevel ls
                                        then s { conflict = c { cMap = cH', cNum = cN + 1 } }
                                        else s { conflict = c { cMap = cH', cPartial = S.insert l cP } }
-  where lNotLevel = decisionLevel ls (-l)
-        cH'       = M.insert l True cH
+  where cH' = M.insert l True cH
 
 removeLiteral :: State -> Literal -> State
 removeLiteral s@(S _ _ ls c@(C cH cP _ cN) _ _) l =
@@ -101,10 +93,10 @@ resolve s c l = F.foldl' addLiteral (removeLiteral s (-l)) [l' | l' <- c, l' /= 
 
 findLastAssertedLiteral :: State -> State
 findLastAssertedLiteral s@(S _ _ (T ls _) c _ _) = s { conflict = c { cLast = lastAsserted } }
-  where lastAsserted = listToMaybe [ l | l <- reverse (F.foldl (\st l' -> fst l' : st) [] ls), M.findWithDefault False (-l) $ cMap c ]
+  where lastAsserted = listToMaybe $ F.foldr (\(l, _) st -> if M.findWithDefault False (-l) $ cMap c then l : st else st) [] ls
 
 getConflictReason :: State -> Literal -> Clause
-getConflictReason s l = M.findWithDefault (error $ "No reason for " ++ show l) l (reasons s)
+getConflictReason s l = M.findWithDefault (error $ "No reason for " ++ show l ++ " litTrail:" ++ show (litTrail s)) l (reasons s)
 
 setConflictReason :: State -> Literal -> Clause -> State
 setConflictReason s l c = s { reasons = M.insert l c $ reasons s }
@@ -126,7 +118,7 @@ backjump s@(S _ _ ls c _ _) = setConflictReason (assertLiteral s' (-cL) False) (
   where (Just cL) = cLast c
         ls'   = prefixToLevel ls $ getBackJumpLevel s
         s'    = s { litTrail = ls', conflict = C M.empty S.empty Nothing 0 }
-        r     = S.toList . S.insert (-cL) $ cPartial c
+        r     = -cL : S.toList (cPartial c)
 
 getBackJumpLevel :: State -> Int
 getBackJumpLevel (S _ _ ls (C _ cP _ _) _ _)
