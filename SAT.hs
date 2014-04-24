@@ -1,7 +1,7 @@
 {-# OPTIONS_GHC -Wall #-}
 
 -- Implemented from http://poincare.matf.bg.ac.rs/~filip/phd/sat-tutorial.pdf
--- This solver uses techniques through v.4 of the sovler in that paper
+-- This solver uses techniques through v.4 of the solver in that paper
 
 module SAT ( solveFormula
            , contradicts
@@ -15,7 +15,7 @@ import Data.Set      (Set)
 import qualified Data.Foldable   as F (any, foldl', foldr)
 import qualified Data.List       as L (partition)
 import qualified Data.Map.Strict as M (empty, findWithDefault, insert)
-import qualified Data.Set        as S (delete, elemAt, empty, filter, findMax, fromList, insert, map, member, notMember, null, size, toList)
+import qualified Data.Set        as S (delete, elemAt, empty, filter, findMax, fromList, insert, isProperSubsetOf, map, member, notMember, null, size, toList)
 
 import Types
 
@@ -85,6 +85,14 @@ explainUIP s
 isUIP :: State -> Bool
 isUIP = (== 1) . cNum . conflict
 
+explainSubsumption :: State -> State
+explainSubsumption s@(S _ _ lt c _ _) = F.foldl' (\st l -> if subsumes cSet (S.delete l $ S.fromList $ getConflictReason s l) then explain st l else st) s cNot'
+  where cSet  = S.insert (negate . fromJust $ cLast c) $ cPartial c
+        cNot' = S.filter (`S.notMember` (litSet lt)) . S.map negate $ cSet
+
+subsumes :: Set Literal -> Set Literal -> Bool
+subsumes c1 c2 = S.isProperSubsetOf c2 c1
+
 explain :: State -> Literal -> State
 explain s l = findLastAssertedLiteral $ resolve s (getConflictReason s l) l
 
@@ -103,12 +111,9 @@ setConflictReason s l c = s { reasons = M.insert l c $ reasons s }
 
 -- Precondition: cL is not Nothing
 learn :: State -> State
-learn s = case c' of
-              [    ] -> s
-              (_:[]) -> s
-              _      -> s { formula = c' : formula s } -- Does it matter if this is formula s ++ [c'] or consed?
+learn s = s { formula = c' : formula s }
   where c  = conflict s
-        c' = S.toList $ S.insert (negate . fromJust $ cLast c) $ cPartial c
+        c' = (negate . fromJust $ cLast c) : S.toList (cPartial c)
 
 -- Backjumping
 
@@ -188,7 +193,7 @@ solve s0
   | contradicts ls1 f1 =
       if currentLevel ls2 == 0
           then (litSet $ litTrail (learn (explainEmpty s2)), UNSAT)
-          else solve $ backjump (learn (explainUIP s2))
+          else solve $ backjump (learn (explainSubsumption (explainUIP s2)))
   | S.size (litSet ls1) == S.size v1 = (litSet ls1, SAT)
   | otherwise = solve $ decide s1
   where s1@(S f1 _ ls1 _ _ v1) = exhaustiveUnitPropogate s0
