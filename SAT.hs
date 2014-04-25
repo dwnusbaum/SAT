@@ -55,10 +55,12 @@ getConflictClause (T _ ms) = head . filter (falseClause ms)
 addLiteral :: State -> Literal -> State
 addLiteral s@(S _ _ ls c@(C cH cP _ cN) _ _) l
   | M.findWithDefault False l cH = s
-  | otherwise                    = if decisionLevel ls (-l) == currentLevel ls
+  | level == 0                   = s
+  | otherwise                    = if level == currentLevel ls
                                        then s { conflict = c { cMap = cH', cNum = cN + 1 } }
                                        else s { conflict = c { cMap = cH', cPartial = S.insert l cP } }
-  where cH' = M.insert l True cH
+  where level = decisionLevel ls (-l)
+        cH' = M.insert l True cH
 
 removeLiteral :: State -> Literal -> State
 removeLiteral s@(S _ _ ls c@(C cH cP _ cN) _ _) l =
@@ -87,8 +89,9 @@ isUIP = (== 1) . cNum . conflict
 
 explainSubsumption :: State -> State
 explainSubsumption s@(S _ _ lt c _ _) = F.foldl' (\st l -> if subsumes cSet (S.delete l $ S.fromList $ getConflictReason s l) then explain st l else st) s cNot'
-  where cSet  = S.insert (negate . fromJust $ cLast c) $ cPartial c
-        cNot' = S.filter (`S.notMember` (litSet lt)) . S.map negate $ cSet
+  where (Just cL) = cLast c
+        cSet  = S.insert (-cL) $ cPartial c
+        cNot' = S.filter (`S.notMember` litSet lt) . S.map negate $ cSet
 
 subsumes :: Set Literal -> Set Literal -> Bool
 subsumes c1 c2 = S.isProperSubsetOf c2 c1
@@ -111,7 +114,10 @@ setConflictReason s l c = s { reasons = M.insert l c $ reasons s }
 
 -- Precondition: cL is not Nothing
 learn :: State -> State
-learn s = s { formula = c' : formula s }
+learn s = case c' of
+              [    ] -> s
+              (_:[]) -> s
+              _      -> s { formula = c' : formula s }
   where c  = conflict s
         c' = (negate . fromJust $ cLast c) : S.toList (cPartial c)
 
@@ -121,9 +127,9 @@ learn s = s { formula = c' : formula s }
 backjump :: State -> State
 backjump s@(S _ _ ls c _ _) = setConflictReason (assertLiteral s' (-cL) False) (-cL) r
   where (Just cL) = cLast c
-        ls'   = prefixToLevel ls $ getBackJumpLevel s
-        s'    = s { litTrail = ls', conflict = C M.empty S.empty Nothing 0 }
-        r     = -cL : S.toList (cPartial c)
+        ls'       = prefixToLevel ls $ getBackJumpLevel s
+        s'        = s { litTrail = ls', conflict = C M.empty S.empty Nothing 0 }
+        r         = -cL : S.toList (cPartial c)
 
 getBackJumpLevel :: State -> Int
 getBackJumpLevel (S _ _ ls (C _ cP _ _) _ _)
@@ -200,7 +206,9 @@ solve s0
         s2@(S _  _ ls2 _ _  _) = applyConflict s1
 
 solveFormula :: Formula -> (Set Literal, SAT)
-solveFormula f = solve $ emptyState { formula = f, variables = F.foldl' (\st l -> S.insert (abs l) st) S.empty . concat $ f }
+solveFormula f = case cleanFormula f of
+                     (s, UNDEF) -> solve s
+                     x          -> first (litSet . litTrail) x
 
 emptyState :: State
 emptyState = S [] [] (T [] S.empty) (C M.empty S.empty Nothing 0) M.empty S.empty
