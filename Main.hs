@@ -2,10 +2,7 @@
 
 module Main(main) where
 
-import Data.Set (fromList)
-
 import SAT
-import Types
 import ParseDimacs
 
 main :: IO ()

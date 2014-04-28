@@ -4,13 +4,13 @@
 -- This solver uses techniques through v.4 of the solver in that paper
 
 module SAT ( solveFormula
-           , contradicts
            , satisfies
            ) where
 
 import Control.Arrow (first)
 import Data.Maybe    (fromJust, isNothing, listToMaybe)
 import Data.Set      (Set)
+import Debug.Trace   (traceShow)
 
 import qualified Data.Foldable   as F (any, foldl', foldr)
 import qualified Data.List       as L (partition)
@@ -41,20 +41,10 @@ prefixToLevel t@(T ls ms) i = T ns $ F.foldl' (\st (x, _) -> S.delete x st) ms r
 lastAssertedLiteral :: LiteralTrail -> Clause -> Literal
 lastAssertedLiteral (T lt _) c = fst . head . filter (\(l, _) -> l `elem` c) $ lt
 
-falseClause :: Set Literal -> Clause -> Bool
-falseClause ls = all (\l -> S.member (-l) ls)
-
-contradicts :: LiteralTrail -> Formula -> Bool
-contradicts (T _ ms) = any (falseClause ms)
-
 satisfies :: LiteralTrail -> Formula -> Bool
 satisfies (T _ ms) = all (any (`S.member` ms))
 
 -- Conflict resolution
-
--- Precondition: There is at least one conflict clause in f
-getConflictClause :: LiteralTrail -> Formula -> Clause
-getConflictClause (T _ ms) = head . filter (falseClause ms)
 
 addLiteral :: State -> Literal -> State
 addLiteral s@(S _ _ ls c@(C cH cP _ cN) _ _ _ _) l
@@ -74,7 +64,7 @@ removeLiteral s@(S _ _ ls c@(C cH cP _ cN) _ _ _ _) l =
   where cH' = M.insert l False cH
 
 applyConflict :: State -> State
-applyConflict s@(S f _ ls _ _ _ _ _) = findLastAssertedLiteral $ F.foldl' addLiteral s' $ getConflictClause ls f
+applyConflict s = findLastAssertedLiteral $ F.foldl' addLiteral s' $ conflictClause s
   where s' = s { conflict = C M.empty S.empty Nothing 0, conflictFlag = False, conflictClause = [] }
 
 explainEmpty :: State -> State
@@ -124,7 +114,7 @@ learn s = case c' of
   where c  = conflict s
         cP = S.toList $ cPartial c
         cL = negate . fromJust $ cLast c
-        cPLast = negate . lastAssertedLiteral (litTrail s) $ map negate cP
+        cPLast = negate . lastAssertedLiteral (litTrail s) . map negate $ cP
         c' = case cP of
                  [] -> [cL]
                  _  -> cL : cPLast : filter (/= cPLast) cP
@@ -136,7 +126,7 @@ backjump :: State -> State
 backjump s@(S _ _ ls c _ _ _ _) = s'
   where (Just cL) = cLast c
         ls'       = prefixToLevel ls $ getBackJumpLevel s
-        s'        = s { litTrail = ls', unitsQueue = [-cL], conflict = C M.empty S.empty Nothing 0, conflictFlag = False }
+        s'        = s { litTrail = ls', unitsQueue = [-cL], conflict = C M.empty S.empty Nothing 0, conflictFlag = False, conflictClause = [] }
 
 getBackJumpLevel :: State -> Int
 getBackJumpLevel (S _ _ ls (C _ cP _ _) _ _ _ _)
@@ -174,12 +164,14 @@ notifyWatches s0@(S f0 _ (T _ m) _ _ _ _ _) l = F.foldl' work s0' check
                                     Just l' -> s1 { formula = setWatch2 c' l' : f1 }
                                     Nothing -> if S.member (-w1) m
                                                    then s1 { formula = c' : f1, conflictFlag = True, conflictClause = c' }
-                                                   else s1 { formula = c' : f1, unitsQueue = w1 : q1 } --if (S.notMember w1 q) then insert else dont
+                                                   else if elem w1 q1
+                                                            then setConflictReason (s1 { formula = c' : f1 }) w1 c'
+                                                            else setConflictReason (s1 { formula = c' : f1, unitsQueue = w1 : q1 }) w1 c'
                            else s1 { formula = c' : f1 }
         needsChecked (a:b:_) = a == l || b == l
         needsChecked _       = error "notifyWatches.needsChecked: Clause was malformed."
-        (check, dont) = L.partition needsChecked f0
-        s0' = s0 { formula = dont }
+        (check, dont)        = L.partition needsChecked f0
+        s0'                  = s0 { formula = dont }
 
 -- Unit Propogation
 
@@ -190,6 +182,7 @@ exhaustiveUnitPropogate s0@(S _ q _ _ cf _ _ _)
   | null q    = s0
   | otherwise = exhaustiveUnitPropogate $ unitPropogate s0
 
+-- Precondition: There is at least one element in the unitsQueue. Ensured by exhaustiveUnitPropogate
 unitPropogate :: State -> State
 unitPropogate s = (assertLiteral s q False) { unitsQueue = qs }
   where (q:qs) = unitsQueue s
@@ -207,10 +200,10 @@ cleanClause s UNDEF c =
         then (s, UNDEF)
         else case cCleanList of
                  [    ] -> (s, UNSAT)
-                 (l:[]) -> (exhaustiveUnitPropogate $ assertLiteral s l False, UNDEF)
+                 (l:[]) -> (exhaustiveUnitPropogate $ assertLiteral (s { variables = S.insert (abs l) $ variables s }) l False, UNDEF)
                  _      -> if any (\l -> S.member (-l) cCleanSet) cCleanList
-                               then (s , UNDEF)
-                               else (s', UNDEF)
+                               then (s , UNDEF) --Dont add tautological clause
+                               else (s', UNDEF) --Otherwise add it
   where cCleanSet  = S.filter (\l -> S.notMember (-l) ms) . S.fromList $ c
         cCleanList = S.toList cCleanSet
         ms         = litSet $ litTrail s
@@ -219,14 +212,14 @@ cleanClause s UNDEF c =
 -- Deciding variable assignments
 
 assertLiteral :: State -> Literal -> Bool -> State
-assertLiteral s@(S _ _ t@(T ls vs) _ _ _ _ _) l d = notifyWatches (s { litTrail = t' }) (-l)
-  where t' = t { litList = (l, d) : ls, litSet = S.insert l vs }
+assertLiteral s@(S _ _ t@(T ls ms) _ _ _ _ _) l d = notifyWatches (s { litTrail = t' }) (-l)
+  where t' = t { litList = (l, d) : ls, litSet = S.insert l ms }
 
 -- Precondition: There is at least one unassigned literal in f
 decide :: State -> State
-decide s@(S _ _ ls _ _ _ _ vs) = assertLiteral s fstUnassigned True
+decide s@(S _ _ lt _ _ _ _ vs) = assertLiteral s fstUnassigned True
   where fstUnassigned = S.elemAt 0 . S.filter (`S.notMember` currentLits) $ vs
-        currentLits   = S.map abs $ litSet ls
+        currentLits   = S.map abs $ litSet lt
 
 -- Solver
 
@@ -238,7 +231,7 @@ solve s0
           else solve $ backjump (learn (explainSubsumption (explainUIP (applyConflict s1))))
   | S.size (litSet ls1) == S.size v1 = (litSet ls1, SAT)
   | otherwise = solve $ decide s1
-  where s1@(S _ _ ls1 _ _ _ _ v1) = exhaustiveUnitPropogate s0
+  where s1@(S _ _ ls1 _ _ _ _ v1) = traceShow (S.size . litSet . litTrail $ s0) $ exhaustiveUnitPropogate s0
 
 solveFormula :: Formula -> (Set Literal, SAT)
 solveFormula f = case cleanFormula f of
