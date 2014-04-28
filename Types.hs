@@ -38,12 +38,14 @@ data Conflict = C
    deriving (Show)
 
 data State = S
-   { formula    :: Formula
-   , unitsQueue :: Clause
-   , litTrail   :: LiteralTrail
-   , conflict   :: Conflict
-   , reasons    :: Map Literal Clause
-   , variables  :: Set Literal
+   { formula      :: Formula
+   , unitsQueue   :: [Literal]
+   , litTrail     :: LiteralTrail
+   , conflict     :: Conflict
+   , conflictFlag :: Bool
+   , conflictClause :: Clause
+   , reasons      :: Map Literal Clause
+   , variables    :: Set Literal
    }
    deriving (Show)
 
