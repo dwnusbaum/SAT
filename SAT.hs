@@ -10,7 +10,6 @@ module SAT ( solveFormula
 import Control.Arrow (first)
 import Data.Maybe    (fromJust, isNothing, listToMaybe)
 import Data.Set      (Set)
-import Debug.Trace   (traceShow)
 
 import qualified Data.Foldable   as F (any, foldl', foldr)
 import qualified Data.List       as L (partition)
@@ -231,7 +230,7 @@ solve s0
           else solve $ backjump (learn (explainSubsumption (explainUIP (applyConflict s1))))
   | S.size (litSet ls1) == S.size v1 = (litSet ls1, SAT)
   | otherwise = solve $ decide s1
-  where s1@(S _ _ ls1 _ _ _ _ v1) = traceShow (S.size . litSet . litTrail $ s0) $ exhaustiveUnitPropogate s0
+  where s1@(S _ _ ls1 _ _ _ _ v1) = exhaustiveUnitPropogate s0
 
 solveFormula :: Formula -> (Set Literal, SAT)
 solveFormula f = case cleanFormula f of
