@@ -30,10 +30,10 @@ data LiteralTrail = T
    deriving (Show)
 
 data Conflict = C
-   { cMap     :: Map Literal Bool   -- Map of literals in conflict
-   , cPartial :: Set Literal        -- Set of literals from lower decision levels
-   , cLast    :: Maybe Literal      -- Last asserted literal of cNot
-   , cNum     :: Int                -- Number of literals at currentLevel of litTrail
+   { cClause  :: [Literal] -- Conflict analysis clause
+   , c1stLast :: Literal   -- Last asserted literal of $ map negate getC
+   , c2ndLast :: Literal   -- Second to last asserted literal of $ map negate getC
+   , cNum     :: Int       -- Number of literals of (map negate c) at currentLevel of litTrail
    }
    deriving (Show)
 
