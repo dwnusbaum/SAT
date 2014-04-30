@@ -11,7 +11,6 @@ module Types ( SAT (..)
              ) where
 
 import Data.Map.Strict (Map)
-import Data.Sequence   (Seq)
 import Data.Set        (Set)
 
 import qualified Data.Foldable as F (toList)
@@ -23,8 +22,8 @@ data SAT
    deriving (Eq, Show)
 
 type Literal = Int
-type Clause  = Seq Literal
-type Formula = Seq Clause
+type Clause  = [Literal]
+type Formula = [Clause]
 
 data LiteralTrail = T
    { litList :: [(Literal, Bool)]
