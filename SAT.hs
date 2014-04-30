@@ -14,7 +14,7 @@ import Data.Set            (Set)
 import qualified Data.Foldable   as F (any, all, foldl', toList)
 import qualified Data.List       as L (span)
 import qualified Data.Map.Strict as M (empty, insert, lookup)
-import qualified Data.Sequence   as Q (drop, dropWhileL, empty, filter, findIndexL, fromList, index, length, singleton, takeWhileL, viewl, viewr)
+import qualified Data.Sequence   as Q (drop, dropWhileL, empty, filter, findIndexL, fromList, index, length, partition, singleton, takeWhileL, viewl, viewr)
 import qualified Data.Set        as S (delete, elemAt, empty, filter, deleteFindMin, fromList, insert, map, member, notMember, null, size, toList, union)
 
 import Types
@@ -156,16 +156,15 @@ swapWatches c = b <| a <| bs
         (b :< bs) = Q.viewl as
 
 notifyWatches :: State -> Literal -> State
-notifyWatches s0 l = F.foldl' loop (s0 { formula = Q.empty }) $ formula s0
-  where loop s1@(S f1 q1 lt@(T _ m1) _ _ _ _ _) c
-          | needsChecked l c = if S.notMember w1 m1
-                         then case getUnwatchedNonfalsifiedLiteral lt c' of
+notifyWatches s0 l = F.foldl' loop (s0 { formula = dont }) $ check
+  where (check, dont) = Q.partition (needsChecked l) $ formula s0
+        loop s1@(S f1 q1 lt@(T _ m1) _ _ _ _ _) c
+          | S.notMember w1 m1 = case getUnwatchedNonfalsifiedLiteral lt c' of
                                   Just l' -> s1 { formula = f1 |> setWatch2 c' l' }
                                   Nothing -> if S.member (-w1) m1
                                                  then newState { conflictFlag = True, conflictCause = c' }
                                                  else setReason (newState { unitsQueue = S.insert w1 q1 }) w1 c'
-                         else newState
-          | otherwise = s1 { formula = f1 |> c }
+          | otherwise = newState
           where c'        = if watch1 c == l then swapWatches c else c
                 (w1 :< _) = Q.viewl c'
                 newState  = s1 { formula = f1 |> c' }
@@ -177,9 +176,7 @@ getUnwatchedNonfalsifiedLiteral (T _ m) c = case Q.findIndexL (\x -> S.notMember
   where c' = Q.drop 2 c
 
 needsChecked :: Literal -> Clause -> Bool
-needsChecked l c = a == l || b == l
-  where (a :< as) = Q.viewl c
-        (b :<  _) = Q.viewl as
+needsChecked l c = Q.index c 0 == l || Q.index c 1 == l
 
 -- Unit Propogation
 
