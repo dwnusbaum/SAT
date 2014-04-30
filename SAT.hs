@@ -7,17 +7,15 @@ module SAT ( solveFormula
            , satisfies
            ) where
 
-import Control.Applicative ((<$>))
 import Control.Arrow       (first)
 import Data.Sequence       (ViewL(..), ViewR(..), (<|), (|>))
 import Data.Set            (Set)
-import Debug.Trace         (trace, traceShow)
 
 import qualified Data.Foldable   as F (any, all, foldl', toList)
-import qualified Data.List       as L (break, partition, span)
+import qualified Data.List       as L (span)
 import qualified Data.Map.Strict as M (empty, insert, lookup)
 import qualified Data.Sequence   as Q (drop, dropWhileL, empty, filter, findIndexL, fromList, index, length, singleton, takeWhileL, viewl, viewr)
-import qualified Data.Set        as S (delete, elemAt, empty, filter, deleteFindMin, fromList, insert, isProperSubsetOf, map, member, notMember, null, size, toList, union)
+import qualified Data.Set        as S (delete, elemAt, empty, filter, deleteFindMin, fromList, insert, map, member, notMember, null, size, toList, union)
 
 import Types
 
@@ -37,7 +35,7 @@ decisionLevel lt = length . decisionsTo lt
 
 prefixToLevel :: LiteralTrail -> Int -> LiteralTrail
 prefixToLevel t@(T lt ms) i = T keep $ F.foldl' (\st (x, _) -> S.delete x st) ms delete
-  where (delete, keep) = L.span (\(l, _) -> decisionLevel t l > i) lt
+  where (delete, keep) = L.span (\(l, _) -> decisionLevel t l >= i) lt
 
 -- Preconditon: There is at least one literal in c that is asserted in the lit trail
 lastAssertedLiteral :: LiteralTrail -> Clause -> Literal
@@ -51,7 +49,7 @@ satisfies (T _ ms) = F.all (F.any (`S.member` ms))
 
 findLastAssertedLiteral :: State -> State
 findLastAssertedLiteral s@(S _ _ lt c _ _ _ _) = s { conflict = c { c1stLast = lastAsserted } }
-  where lastAsserted = lastAssertedLiteral lt $ negate <$> cClause c
+  where lastAsserted = lastAssertedLiteral lt . fmap negate $ cClause c
 
 countCurrentLevelLits :: State -> State
 countCurrentLevelLits s@(S _ _ lt c _ _ _ _) = s { conflict = conflict' }
@@ -221,8 +219,8 @@ cleanClause s UNDEF c =
 -- Deciding variable assignments
 
 assertLiteral :: State -> Literal -> Bool -> State
-assertLiteral s@(S _ _ t@(T ls ms) _ _ _ _ _) l d = notifyWatches (s { litTrail = t' }) (-l)
-  where t' = t { litList = (l, d) : ls, litSet = S.insert l ms }
+assertLiteral s@(S _ _ t@(T lt ms) _ _ _ _ _) l d = notifyWatches (s { litTrail = t' }) (-l)
+  where t' = t { litList = (l, d) : lt, litSet = S.insert l ms }
 
 -- Precondition: There is at least one unassigned literal in f
 decide :: State -> State
@@ -238,10 +236,9 @@ solve s0
       if currentLevel lt1 == 0
           then (litSet lt1, UNSAT)
           else solve . backjump . learn . explainUIP . applyConflict $ s1
-  | v1 `S.isProperSubsetOf` (S.map abs $ litSet lt1) = (litSet lt1, SAT)
-  | otherwise = solve $ decide s1
-  where s1@(S _ _ lt1 _ _ _ _ v1) = message . exhaustiveUnitPropogate $ s0
-        message t = if F.any (\l -> S.member (-l) $ litSet $ litTrail t) $ unitsQueue t then error "WHY" else trace "HEY" t
+  | S.size (litSet lt1) == S.size v1 = (litSet lt1, SAT)
+  | otherwise = solve . decide $ s1
+  where s1@(S _ _ lt1 _ _ _ _ v1) = exhaustiveUnitPropogate $ s0
 
 solveFormula :: Formula -> (Set Literal, SAT)
 solveFormula f = case cleanFormula f of
