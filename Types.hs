@@ -11,7 +11,10 @@ module Types ( SAT (..)
              ) where
 
 import Data.Map.Strict (Map)
+import Data.Sequence   (Seq)
 import Data.Set        (Set)
+
+import qualified Data.Foldable as F (toList)
 
 data SAT
    = SAT
@@ -20,8 +23,8 @@ data SAT
    deriving (Eq, Show)
 
 type Literal = Int
-type Clause  = [Literal]
-type Formula = [Clause]
+type Clause  = Seq Literal
+type Formula = Seq Clause
 
 data LiteralTrail = T
    { litList :: [(Literal, Bool)]
@@ -30,26 +33,26 @@ data LiteralTrail = T
    deriving (Show)
 
 data Conflict = C
-   { cClause  :: [Literal] -- Conflict analysis clause
-   , c1stLast :: Literal   -- Last asserted literal of $ map negate getC
-   , c2ndLast :: Literal   -- Second to last asserted literal of $ map negate getC
-   , cNum     :: Int       -- Number of literals of (map negate c) at currentLevel of litTrail
+   { cClause  :: Clause  -- Conflict analysis clause
+   , c1stLast :: Literal -- Last asserted literal of $ map negate getC
+   , c2ndLast :: Literal -- Second to last asserted literal of $ map negate getC
+   , cNum     :: Int     -- Number of literals of (map negate c) at currentLevel of litTrail
    }
    deriving (Show)
 
 data State = S
-   { formula        :: Formula
-   , unitsQueue     :: [Literal]
-   , litTrail       :: LiteralTrail
-   , conflict       :: Conflict
-   , conflictFlag   :: Bool
-   , conflictClause :: Clause
-   , reasons        :: Map Literal Clause
-   , variables      :: Set Literal        -- Absolute value of literals in the formula
+   { formula       :: Formula
+   , unitsQueue    :: Set Literal
+   , litTrail      :: LiteralTrail
+   , conflict      :: Conflict
+   , conflictFlag  :: Bool
+   , conflictCause :: Clause
+   , reasons       :: Map Literal Clause
+   , variables     :: Set Literal        -- Absolute value of literals in the formula
    }
    deriving (Show)
 
 data XorEquation = XEq Clause Bool
 
 instance Show XorEquation where
-    show (XEq c b) = "[" ++ unwords (map show c) ++ " | " ++ show b ++ "]"
+    show (XEq c b) = "[" ++ unwords (map show $ F.toList c) ++ " | " ++ show b ++ "]"
