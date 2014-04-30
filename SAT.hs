@@ -105,7 +105,7 @@ setReason s l c = s { reasons = M.insert l c $ reasons s }
 learn :: State -> State
 learn s@(S f _ lt (C c cL _ cN) _ _ _ _)
   | c == Q.singleton(-cL) = s
-  | otherwise             = s { formula = f |> c', conflict = C c cL cLL cN }
+  | otherwise             = s { formula = c' <| f, conflict = C c cL cLL cN }
   where cLL = lastAssertedLiteral lt $ Q.filter (/= cL) . fmap negate $ c
         c'  = (-cL) <| (-cLL) <| Q.filter (\x -> x /= (-cL) && x /= (-cLL)) c
 
@@ -114,7 +114,7 @@ learn s@(S f _ lt (C c cL _ cN) _ _ _ _)
 -- Precondition: Formula has at least one clause, cL is not Nothing
 backjump :: State -> State
 backjump s@(S f _ lt c _ _ _ _) = assertLiteral (if level > 0 then setReason s' (-cL) r else s') (-cL) False
-  where (_ :> r) = Q.viewr f
+  where (r :< _) = Q.viewl f
         cL       = c1stLast c
         level    = getBackJumpLevel s
         s'       = s { litTrail      = prefixToLevel lt level
@@ -157,17 +157,16 @@ swapWatches c = b <| a <| bs
 
 notifyWatches :: State -> Literal -> State
 notifyWatches s0 l = F.foldl' loop (s0 { formula = dont }) $ check
-  where (check, dont) = Q.partition (needsChecked l) $ formula s0
+  where (check, dont) = Q.partition (needsChecked l) $ seq (formula s0) $ formula s0
         loop s1@(S f1 q1 lt@(T _ m1) _ _ _ _ _) c
           | S.notMember w1 m1 = case getUnwatchedNonfalsifiedLiteral lt c' of
-                                  Just l' -> s1 { formula = f1 |> setWatch2 c' l' }
+                                  Just l' -> s1 { formula = setWatch2 c' l' <| f1 }
                                   Nothing -> if S.member (-w1) m1
-                                                 then newState { conflictFlag = True, conflictCause = c' }
-                                                 else setReason (newState { unitsQueue = S.insert w1 q1 }) w1 c'
-          | otherwise = newState
+                                                 then s1 { formula = c' <| f1, conflictFlag = True, conflictCause = c' }
+                                                 else setReason (s1 { formula = c <| f1, unitsQueue = S.insert w1 q1 }) w1 c'
+          | otherwise = s1 { formula = c' <| f1 }
           where c'        = if watch1 c == l then swapWatches c else c
                 (w1 :< _) = Q.viewl c'
-                newState  = s1 { formula = f1 |> c' }
 
 getUnwatchedNonfalsifiedLiteral :: LiteralTrail -> Clause -> Maybe Literal
 getUnwatchedNonfalsifiedLiteral (T _ m) c = case Q.findIndexL (\x -> S.notMember (-x) m) c' of
@@ -209,9 +208,9 @@ cleanClause s UNDEF c =
                           then (s , UNDEF) --Dont add tautological clause
                           else (s', UNDEF) --Otherwise add it
   where cCleanSet  = S.filter (\l -> S.notMember (-l) ms) . S.fromList . F.toList $ c
-        cCleanList = Q.fromList . S.toList $ cCleanSet
+        cCleanList = F.foldl' (flip (<|)) Q.empty cCleanSet
         ms         = litSet $ litTrail s
-        s'         = s { formula = formula s |> cCleanList, variables = F.foldl' (\st l -> S.insert (abs l) st) (variables s) cCleanList }
+        s'         = s { formula = cCleanList <| formula s, variables = F.foldl' (\st l -> S.insert (abs l) st) (variables s) cCleanList }
 
 -- Deciding variable assignments
 
@@ -235,7 +234,7 @@ solve s0
           else solve . backjump . learn . explainUIP . applyConflict $ s1
   | S.size (litSet lt1) == S.size v1 = (litSet lt1, SAT)
   | otherwise = solve . decide $ s1
-  where s1@(S _ _ lt1 _ _ _ _ v1) = exhaustiveUnitPropogate $ s0
+  where s1@(S _ _ lt1 _ _ _ _ v1) = exhaustiveUnitPropogate s0
 
 solveFormula :: Formula -> (Set Literal, SAT)
 solveFormula f = case cleanFormula f of

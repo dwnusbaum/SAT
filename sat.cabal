@@ -11,4 +11,4 @@ cabal-Version:       >=1.2
 executable sat
   Main-is:           Main.hs
   Build-Depends:     base >= 3, containers, mtl, parsec, transformers
-  ghc-options:       -Wall -funbox-strict-fields -O1 -rtsopts -prof -fprof-auto
+  ghc-options:       -Wall -O -funbox-strict-fields -rtsopts -fprof-auto
