@@ -10,10 +10,9 @@ module Types ( SAT (..)
              , XorEquation(..)
              ) where
 
-import Data.Map.Strict (Map)
-import Data.Set        (Set)
-
-import qualified Data.Foldable as F (toList)
+import Data.IntMap.Strict (IntMap)
+import Data.Set           (Set)
+import Data.Vector        (Vector, toList)
 
 data SAT
    = SAT
@@ -22,7 +21,7 @@ data SAT
    deriving (Eq, Show)
 
 type Literal = Int
-type Clause  = [Literal]
+type Clause  = Vector Literal
 type Formula = [Clause]
 
 data LiteralTrail = T
@@ -46,12 +45,12 @@ data State = S
    , conflict      :: Conflict
    , conflictFlag  :: Bool
    , conflictCause :: Clause
-   , reasons       :: Map Literal Clause
-   , variables     :: Set Literal        -- Absolute value of literals in the formula
+   , reasons       :: IntMap Clause
+   , variables     :: Set Literal -- Absolute value of literals in the formula
    }
    deriving (Show)
 
 data XorEquation = XEq Clause Bool
 
 instance Show XorEquation where
-    show (XEq c b) = "[" ++ unwords (map show $ F.toList c) ++ " | " ++ show b ++ "]"
+    show (XEq c b) = "[" ++ unwords (map show $ toList c) ++ " | " ++ show b ++ "]"
