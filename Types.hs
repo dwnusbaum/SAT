@@ -4,9 +4,11 @@ module Types ( SAT (..)
              , State (..)
              , Conflict (..)
              , LiteralTrail(..)
-             , Formula
-             , Clause
              , Literal
+             , Clause
+             , ClauseIndex
+             , Formula
+             , WatchList
              ) where
 
 import Data.IntMap.Strict (IntMap)
@@ -19,9 +21,11 @@ data SAT
    | UNDEF
    deriving (Eq, Show)
 
-type Literal = Int
-type Clause  = Vector Literal
-type Formula = Vector Clause
+type Literal      = Int
+type Clause       = Vector Literal
+type ClauseIndex  = Int
+type Formula      = Vector Clause
+type WatchList    = IntMap [Int]
 
 data LiteralTrail = T
    { litList :: [(Literal, Bool)]
@@ -38,14 +42,15 @@ data Conflict = C
    deriving (Show)
 
 data State = S
-   { formula       :: Formula
-   , watchList     :: IntMap [Int]
-   , unitsQueue    :: Set Literal
-   , litTrail      :: LiteralTrail
-   , conflict      :: Conflict
-   , conflictFlag  :: Bool
-   , conflictCause :: Clause
-   , reasons       :: IntMap Clause
-   , variables     :: Set Literal -- Absolute value of literals in the formula
+   { formula       :: Formula       -- The entire boolean formula
+   , litTrail      :: LiteralTrail  -- The assigned literal trail
+   , watchList     :: IntMap [Int]  -- From literal to clause indices in which that lit is watched
+   , watch1        :: IntMap Int    -- From clause index to 1st watched literal in clause
+   , watch2        :: IntMap Int    -- From clause index to 2nd watched literal in clause
+   , unitsQueue    :: Set Literal   -- The queue of unit literals that need to be propogated
+   , conflict      :: Conflict      -- Stores details about the conflict while resolving it
+   , conflictCause :: Clause        -- The clause that caused a conflict (if null no conflict)
+   , reasons       :: IntMap Clause -- Reasons for propogating a literal
+   , variables     :: Set Literal   -- Absolute value of literals in the formula
    }
    deriving (Show)
