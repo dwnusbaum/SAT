@@ -7,12 +7,11 @@ module Types ( SAT (..)
              , Formula
              , Clause
              , Literal
-             , XorEquation(..)
              ) where
 
 import Data.IntMap.Strict (IntMap)
 import Data.Set           (Set)
-import Data.Vector        (Vector, toList)
+import Data.Vector        (Vector)
 
 data SAT
    = SAT
@@ -22,7 +21,7 @@ data SAT
 
 type Literal = Int
 type Clause  = Vector Literal
-type Formula = [Clause]
+type Formula = Vector Clause
 
 data LiteralTrail = T
    { litList :: [(Literal, Bool)]
@@ -40,6 +39,7 @@ data Conflict = C
 
 data State = S
    { formula       :: Formula
+   , watchList     :: IntMap [Int]
    , unitsQueue    :: Set Literal
    , litTrail      :: LiteralTrail
    , conflict      :: Conflict
@@ -49,8 +49,3 @@ data State = S
    , variables     :: Set Literal -- Absolute value of literals in the formula
    }
    deriving (Show)
-
-data XorEquation = XEq Clause Bool
-
-instance Show XorEquation where
-    show (XEq c b) = "[" ++ unwords (map show $ toList c) ++ " | " ++ show b ++ "]"

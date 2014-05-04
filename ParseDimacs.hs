@@ -21,7 +21,7 @@ parseDimacsFile fileName = do
     return (parse cnf fileName input)
 
 cnf :: Parser Formula
-cnf = cnfHeader >> many clause
+cnf = cnfHeader >> many clause >>= return . fromList
 
 clause :: Parser Clause
 clause = liftM fromList $ lexeme int `manyTill` try (symbol "0")
