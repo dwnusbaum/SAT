@@ -9,11 +9,20 @@ module Types ( SAT (..)
              , ClauseIndex
              , Formula
              , WatchList
+             , decisionLevel
+             , prefixToLevel
+             , lastAssertedLiteral
+             , addToTrail
              ) where
 
 import Data.IntMap.Strict (IntMap)
 import Data.Set           (Set)
 import Data.Vector        (Vector)
+
+import qualified Data.Foldable      as F (foldl')
+import qualified Data.IntMap.Strict as M (alter, delete, findWithDefault, insert)
+import qualified Data.Set           as S (delete, fromList, insert, member)
+import qualified Data.Vector        as V (toList)
 
 data SAT
    = SAT
@@ -28,8 +37,9 @@ type Formula      = Vector Clause
 type WatchList    = IntMap [Int]
 
 data LiteralTrail = T
-   { litList :: [(Literal, Bool)]
-   , litSet  :: Set Literal -- S.fromList $ map fst listList == litList
+   { currentLevel :: Int
+   , trail        :: IntMap [Literal]
+   , trailSet     :: Set Literal
    }
    deriving (Show)
 
@@ -54,3 +64,33 @@ data State = S
    , variables     :: Set Literal   -- Absolute value of literals in the formula
    }
    deriving (Show)
+
+-- Literal Trail methods
+
+decisionLevel :: LiteralTrail -> Literal -> Int
+decisionLevel (T n lt _) l = go n
+  where go 0 = 0
+        go x
+          | l `elem` unsafeFind x lt = x
+          | otherwise = go (x-1)
+
+prefixToLevel :: LiteralTrail -> Int -> LiteralTrail
+prefixToLevel t0 i = go t0
+  where go t1@(T n lt ms)
+          | n == i = t1
+          | otherwise = go $ T (n-1) (M.delete n lt) $ F.foldl' (\st l -> S.delete l st) ms (unsafeFind n lt)
+
+-- Preconditon: There is at least one literal in c that is asserted in the lit trail
+lastAssertedLiteral :: LiteralTrail -> Clause -> Literal
+lastAssertedLiteral (T n lt _) c = go n
+  where go x = case filter (`S.member` c') $ unsafeFind x lt of
+                   []    -> go (x-1)
+                   (l:_) -> l
+        c' = S.fromList . V.toList $ c
+
+addToTrail :: LiteralTrail -> Literal -> Bool -> LiteralTrail
+addToTrail (T n lt ms) l True  = T (n+1) (M.insert (n+1) [l] lt) (S.insert l ms)
+addToTrail (T n lt ms) l False = T n (M.alter (Just . maybe [l] (l :)) n lt) (S.insert l ms)
+
+unsafeFind :: (Show a) => Int -> IntMap a -> a
+unsafeFind i m = M.findWithDefault (error $ "unsafeFind: Element not found: " ++ show i ++ " in " ++ show m) i m
