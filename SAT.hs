@@ -1,156 +1,162 @@
 {-# OPTIONS_GHC -Wall #-}
 
 -- Implemented from http://poincare.matf.bg.ac.rs/~filip/phd/sat-tutorial.pdf
--- This solver uses techniques through v.4 of the solver in that paper
+-- This solver uses techniques through v.10 of the solver in that paper
 
 module SAT ( solveFormula
            , contradicts
            , satisfies
            ) where
 
-import Control.Arrow (first)
-import Data.Maybe    (fromJust, isNothing, listToMaybe)
+import Data.Maybe    (fromJust)
 import Data.Set      (Set)
 
-import qualified Data.Foldable   as F (any, foldl', foldr)
-import qualified Data.List       as L (partition)
-import qualified Data.Map.Strict as M (empty, findWithDefault, insert)
-import qualified Data.Set        as S (delete, elemAt, empty, filter, findMax, fromList, insert, isProperSubsetOf, map, member, notMember, null, size, toList)
+import qualified Data.Foldable      as F (foldl')
+import qualified Data.IntMap.Strict as M (alter, empty, findWithDefault, insert, lookup)
+import qualified Data.Set           as S (delete, elemAt, empty, filter, deleteFindMin, fromList, insert, map, member, notMember, null, size, toList, union)
+import qualified Data.Vector        as V (all, any, empty, filter, foldl', fromList, last, length, map, singleton, snoc, toList, (!), (!?))
 
 import Types
 
--- Literal Trail methods
+satisfies :: Set Literal -> Formula -> Bool
+satisfies ms = V.all (V.any (`S.member` ms))
 
-decisions :: LiteralTrail -> [(Literal, Bool)]
-decisions = filter snd . litList
-
-decisionsTo :: LiteralTrail -> Literal -> [(Literal, Bool)]
-decisionsTo (T ls _) l = filter snd . dropWhile ((/= l) . fst) $ ls
-
-currentLevel :: LiteralTrail -> Int
-currentLevel = length . decisions
-
-decisionLevel :: LiteralTrail -> Literal -> Int
-decisionLevel ls = length . decisionsTo ls
-
-prefixToLevel :: LiteralTrail -> Int -> LiteralTrail
-prefixToLevel t@(T ls ms) i = T ns $ F.foldl' (\st (x, _) -> S.delete x st) ms rs
-  where (ns, rs) = L.partition (\(l, _) -> decisionLevel t l <= i) ls
-
-falseClause :: Set Literal -> Clause -> Bool
-falseClause ls = all (\l -> S.member (-l) ls)
-
-contradicts :: LiteralTrail -> Formula -> Bool
-contradicts (T _ ms) = any (falseClause ms)
-
-satisfies :: LiteralTrail -> Formula -> Bool
-satisfies (T _ ms) = all (any (`S.member` ms))
+contradicts :: Set Literal -> Formula -> Bool
+contradicts ms = V.any (V.all (flip S.member ms . negate))
 
 -- Conflict resolution
 
--- Precondition: There is at least one conflict clause in f
-getConflictClause :: LiteralTrail -> Formula -> Clause
-getConflictClause (T _ ms) = head . filter (falseClause ms)
+findLastAssertedLiteral :: State -> State
+findLastAssertedLiteral s@(S _ lt _ _ _ _ c _ _ _) = s { conflict = c { c1stLast = lastAsserted } }
+  where lastAsserted = lastAssertedLiteral lt . V.map negate $ cClause c
 
-addLiteral :: State -> Literal -> State
-addLiteral s@(S _ _ ls c@(C cH cP _ cN) _ _) l
-  | M.findWithDefault False l cH = s
-  | otherwise                    = if decisionLevel ls (-l) == currentLevel ls
-                                       then s { conflict = c { cMap = cH', cNum = cN + 1 } }
-                                       else s { conflict = c { cMap = cH', cPartial = S.insert l cP } }
-  where cH' = M.insert l True cH
+countCurrentLevelLits :: State -> State
+countCurrentLevelLits s@(S _ lt _ _ _ _ c _ _ _) = s { conflict = conflict' }
+  where level     = currentLevel lt
+        conflict' = c { cNum = V.length . V.filter (\l -> decisionLevel lt (-l) == level) $ cClause c }
 
-removeLiteral :: State -> Literal -> State
-removeLiteral s@(S _ _ ls c@(C cH cP _ cN) _ _) l =
-    if decisionLevel ls (-l) == currentLevel ls
-        then s { conflict = c { cMap = cH', cNum = cN - 1 } }
-        else s { conflict = c { cMap = cH', cPartial = S.delete l cP } }
-  where cH' = M.insert l False cH
+setConflictAnalysisClause :: State -> Clause -> State
+setConflictAnalysisClause s c = countCurrentLevelLits . findLastAssertedLiteral $ s { conflict = c' }
+  where oppLitTrailTo0 = S.map negate . trailSet $ prefixToLevel (litTrail s) 0
+        c'             = (conflict s) { cClause = V.filter (`S.notMember` oppLitTrailTo0) c }
 
 applyConflict :: State -> State
-applyConflict s@(S f _ ls _ _ _) = findLastAssertedLiteral $ F.foldl' addLiteral s' conflictClause
-  where conflictClause = getConflictClause ls f
-        s' = s { conflict = C M.empty S.empty Nothing 0 }
-
-explainEmpty :: State -> State
-explainEmpty s@(S _ _ _ (C _ cP cL _) _ _)
-  | isNothing cL && S.null cP = s
-  | otherwise                 = explainEmpty $ explain s $ fromJust cL
+applyConflict s = setConflictAnalysisClause s $ conflictCause s
 
 explainUIP :: State -> State
 explainUIP s
   | isUIP s = s
-  | otherwise = explainUIP . explain s . fromJust . cLast $ conflict s
+  | otherwise = explainUIP . explain s . c1stLast . conflict $ s
 
 isUIP :: State -> Bool
 isUIP = (== 1) . cNum . conflict
 
-explainSubsumption :: State -> State
-explainSubsumption s@(S _ _ lt c _ _) = F.foldl' (\st l -> if subsumes cSet (S.delete l $ S.fromList $ getConflictReason s l) then explain st l else st) s cNot'
-  where cSet  = S.insert (negate . fromJust $ cLast c) $ cPartial c
-        cNot' = S.filter (`S.notMember` (litSet lt)) . S.map negate $ cSet
-
-subsumes :: Set Literal -> Set Literal -> Bool
-subsumes c1 c2 = S.isProperSubsetOf c2 c1
-
 explain :: State -> Literal -> State
-explain s l = findLastAssertedLiteral $ resolve s (getConflictReason s l) l
+explain s l = case getReason s l of
+  Nothing -> error ("Explain didn't find a reason for " ++ show l)
+  Just  r -> setConflictAnalysisClause s . resolve (cClause . conflict $ s) r $ (-l)
 
-resolve :: State -> Clause -> Literal -> State
-resolve s c l = F.foldl' addLiteral (removeLiteral s (-l)) [l' | l' <- c, l' /= l]
+resolve :: Clause -> Clause -> Literal -> Clause
+resolve c1 c2 l = V.fromList . S.toList $ S.union c1Set c2Set
+  where c1Set = S.delete l    . S.fromList . V.toList $ c1
+        c2Set = S.delete (-l) . S.fromList . V.toList $ c2
 
-findLastAssertedLiteral :: State -> State
-findLastAssertedLiteral s@(S _ _ (T ls _) c _ _) = s { conflict = c { cLast = lastAsserted } }
-  where lastAsserted = listToMaybe $ F.foldr (\(l, _) st -> if M.findWithDefault False (-l) $ cMap c then l : st else st) [] ls
+getReason :: State -> Literal -> Maybe Clause
+getReason s l = M.lookup l (reasons s)
 
-getConflictReason :: State -> Literal -> Clause
-getConflictReason s l = M.findWithDefault (error $ "No reason for " ++ show l ++ " litTrail:" ++ show (litTrail s)) l (reasons s)
-
-setConflictReason :: State -> Literal -> Clause -> State
-setConflictReason s l c = s { reasons = M.insert l c $ reasons s }
+setReason :: State -> Literal -> Clause -> State
+setReason s l c = s { reasons = M.insert l c $ reasons s }
 
 -- Precondition: cL is not Nothing
 learn :: State -> State
-learn s = s { formula = c' : formula s }
-  where c  = conflict s
-        c' = (negate . fromJust $ cLast c) : S.toList (cPartial c)
+learn s@(S f lt _ _ _ _ (C c cL _ cN) _ _ _)
+  | c == V.singleton(-cL) = s
+  | otherwise = s' { formula = V.snoc f c, conflict = C c cL cLL cN }
+  where cLL = lastAssertedLiteral lt . V.filter (/= cL) . V.map negate $ c
+        ci  = V.length f
+        s'  = setWatch2 ci (-cLL) . setWatch1 ci (-cL) $ s
 
 -- Backjumping
 
--- Precondition: cL is not Nothing
+-- Precondition: Formula has at least one clause, cL is not Nothing
 backjump :: State -> State
-backjump s@(S _ _ ls c _ _) = setConflictReason (assertLiteral s' (-cL) False) (-cL) r
-  where (Just cL) = cLast c
-        ls'   = prefixToLevel ls $ getBackJumpLevel s
-        s'    = s { litTrail = ls', conflict = C M.empty S.empty Nothing 0 }
-        r     = -cL : S.toList (cPartial c)
+backjump s@(S f lt _ _ _ _ c _ _ _) = assertLiteral (if level > 0 then setReason s' (-cL) r else s') (-cL) False
+  where cL       = c1stLast c
+        level    = getBackJumpLevel s
+        r        = V.last f
+        s'       = s { litTrail      = prefixToLevel lt level
+                     , unitsQueue    = S.empty
+                     , conflict      = C V.empty 0 0 0
+                     , conflictCause = V.empty
+                     }
 
 getBackJumpLevel :: State -> Int
-getBackJumpLevel (S _ _ ls (C _ cP _ _) _ _)
-  | S.null cP = 0
-  | otherwise = S.findMax $ S.map (decisionLevel ls . negate) cP
+getBackJumpLevel (S _ lt _ _ _ _ (C c cL cLL _) _ _ _)
+  | c == V.singleton(-cL) = 0
+  | otherwise  = decisionLevel lt cLL
+
+-- Two-watch literal scheme
+
+-- Precondition: Clause has at least 1 element.  Assured by the rest of the program.
+getWatch1 :: State -> ClauseIndex -> Maybe Literal
+getWatch1 s ci = M.lookup ci $ watch1 s
+
+-- Precondition: Clause has at least 2 elements.  Assured by the rest of the program.
+getWatch2 :: State -> ClauseIndex -> Maybe Literal
+getWatch2 s ci = M.lookup ci $ watch2 s
+
+setWatch1 ::ClauseIndex -> Literal -> State -> State
+setWatch1 ci l s = s { watchList = alterWatchList ci l wl, watch1 = M.insert ci l w1 }
+  where wl = watchList s
+        w1 = watch1 s
+
+-- Precondition: Clause has at least 1 element.  Assured by the rest of the program.
+setWatch2 :: ClauseIndex -> Literal -> State -> State
+setWatch2 ci l s = s { watchList = alterWatchList ci l wl, watch2 = M.insert ci l w2 }
+  where wl = watchList s
+        w2 = watch2 s
+
+swapWatches :: State -> ClauseIndex -> State
+swapWatches s ci = s { watch1 = M.insert ci (find ci w2) w1, watch2 = M.insert ci (find ci w1) w2 }
+  where w1 = watch1 s
+        w2 = watch2 s
+        find = M.findWithDefault (error "swapWatches: Watch did not exist for clause")
+
+alterWatchList :: ClauseIndex -> Literal -> WatchList -> WatchList
+alterWatchList i = M.alter (Just . maybe [i] (i :))
+
+notifyWatches :: State -> Literal -> State
+notifyWatches s0 l = F.foldl' loop (s0 { watchList = M.insert l [] $ watchList s0 }) $ M.findWithDefault [] l $ watchList s0
+  where loop s1@(S _ lt@(T _ _ m1) wl _ _ q _ _ _ _) ci
+          | S.member clauseW1 m1 = s1'
+          | otherwise = case getUnwatchedNonfalsifiedLiteral lt clause clauseW1 clauseW2 of
+                                  Just l' -> setWatch2 ci l' sSwap
+                                  Nothing -> if S.member (-clauseW1) m1
+                                                 then s1' { conflictCause = clause }
+                                                 else setReason (s1' { unitsQueue = S.insert clauseW1 q }) clauseW1 clause
+          | otherwise = s1'
+          where swap     = getWatch1 s1 ci == Just l
+                sSwap    = if swap then swapWatches s1 ci else s1
+                clause   = (V.! ci) . formula $ sSwap
+                clauseW1 = fromJust $ getWatch1 sSwap ci
+                clauseW2 = fromJust $ getWatch2 sSwap ci
+                s1'      = sSwap { watchList = alterWatchList ci l wl }
+
+getUnwatchedNonfalsifiedLiteral :: LiteralTrail -> Clause -> Literal -> Literal -> Maybe Literal
+getUnwatchedNonfalsifiedLiteral (T _ _ ms) c w1 w2 = (V.!? 0) . V.filter (\x -> S.notMember (-x) ms) . V.filter (\x -> x /= w1 && x /= w2) $ c
 
 -- Unit Propogation
 
--- Rewrite into a fold over unitLitsAndClauses from unitPropogate?
 exhaustiveUnitPropogate :: State -> State
-exhaustiveUnitPropogate s0
-  | contradicts ls1 f1 = s1
-  | not b              = s1
-  | otherwise          = exhaustiveUnitPropogate s1
-  where (s1@(S f1 _ ls1 _ _ _), b) = unitPropogate s0
+exhaustiveUnitPropogate s0@(S _ _ _ _ _ q _ cc _ _)
+  | V.length cc > 0 = s0
+  | S.null q        = s0
+  | otherwise       = exhaustiveUnitPropogate $ unitPropogate s0
 
-unitPropogate :: State -> (State, Bool)
-unitPropogate s@(S f _ (T _ ms) _ _ _) = case fmap (first head) mFirstUnitClause of
-    Nothing     -> (s, False)
-    Just (u, r) -> (setConflictReason (assertLiteral s u False) u r, True)
-  where mFirstUnitClause       = listToMaybe . filter (lengthEq1 . fst) $ zip removeFalsifiedLits removeSatisfiedClauses
-        removeFalsifiedLits    = map (filter (\l -> S.notMember (-l) ms)) removeSatisfiedClauses
-        removeSatisfiedClauses = filter (not . any (`S.member` ms)) f
-
-lengthEq1 :: [a] -> Bool
-lengthEq1 (_:[]) = True
-lengthEq1  _     = False
+-- Precondition: There is at least one element in the unitsQueue. Ensured by exhaustiveUnitPropogate
+unitPropogate :: State -> State
+unitPropogate s = assertLiteral (s { unitsQueue = qs }) q False
+  where (q, qs) = S.deleteFindMin $ unitsQueue s
 
 -- Formula Simplification
 
@@ -161,46 +167,60 @@ cleanClause :: State -> SAT -> Clause -> (State, SAT)
 cleanClause s SAT   _ = (s,   SAT)
 cleanClause s UNSAT _ = (s, UNSAT)
 cleanClause s UNDEF c =
-    if F.any (`S.member` ms) cCleanList
+    if V.any (`S.member` ms) cCleanList
         then (s, UNDEF)
-        else case cCleanList of
-                 [    ] -> (s, UNSAT)
-                 (l:[]) -> (exhaustiveUnitPropogate $ assertLiteral s l False, UNDEF)
-                 _      -> if any (\l -> S.member (-l) cCleanSet) cCleanList
-                               then (s , UNDEF)
-                               else (s', UNDEF)
-  where cCleanSet  = S.filter (\l -> S.notMember (-l) ms) . S.fromList $ c
-        cCleanList = S.toList cCleanSet
-        ms         = litSet $ litTrail s
-        s'         = s { formula = cCleanList : formula s, variables = F.foldl' (\st l -> S.insert (abs l) st) (variables s) cCleanList }
+        else case V.length cCleanList of
+                 0 -> (s, UNSAT)
+                 1 -> (exhaustiveUnitPropogate $ assertLiteral (s { variables = S.insert (abs headCClean) $ variables s }) headCClean False, UNDEF)
+                 _ -> if V.any (\l -> S.member (-l) cCleanSet) cCleanList
+                          then (s , UNDEF) --Dont add tautological clause
+                          else (s', UNDEF) --Otherwise add it
+  where cCleanSet     = S.filter (\l -> S.notMember (-l) ms) . S.fromList . V.toList $ c
+        cCleanList    = V.fromList . S.toList $ cCleanSet
+        headCClean    = cCleanList V.! 0
+        ms            = trailSet $ litTrail s
+        clauseIndex   = V.length $ formula s
+        updateWatches = setWatch2 clauseIndex (cCleanList V.! 1) . setWatch1 clauseIndex headCClean $ s
+        s'            = updateWatches { formula = V.snoc (formula s) cCleanList, variables = V.foldl' (\st l -> S.insert (abs l) st) (variables s) cCleanList }
 
 -- Deciding variable assignments
 
 assertLiteral :: State -> Literal -> Bool -> State
-assertLiteral s@(S _ _ t@(T ls vs) _ _ _) l d = s { litTrail = t' }
-  where t' = t { litList = (l, d) : ls, litSet = S.insert l vs }
+assertLiteral s l d = notifyWatches (s { litTrail = addToTrail (litTrail s) l d }) (-l)
 
 -- Precondition: There is at least one unassigned literal in f
 decide :: State -> State
-decide s@(S _ _ ls _ _ vs) = assertLiteral s fstUnassigned True
-  where fstUnassigned = S.elemAt 0 . S.filter (`S.notMember` currentLits) $ vs
-        currentLits   = S.map abs $ litSet ls
+decide s = assertLiteral s fstUnassigned True
+  where fstUnassigned = S.elemAt 0 . S.filter (`S.notMember` currentLits) . variables $ s
+        currentLits   = S.map abs . trailSet . litTrail $ s
 
 -- Solver
 
 solve :: State -> (Set Literal, SAT)
 solve s0
-  | contradicts ls1 f1 =
-      if currentLevel ls2 == 0
-          then (litSet $ litTrail (learn (explainEmpty s2)), UNSAT)
-          else solve $ backjump (learn (explainSubsumption (explainUIP s2)))
-  | S.size (litSet ls1) == S.size v1 = (litSet ls1, SAT)
-  | otherwise = solve $ decide s1
-  where s1@(S f1 _ ls1 _ _ v1) = exhaustiveUnitPropogate s0
-        s2@(S _  _ ls2 _ _  _) = applyConflict s1
+  | V.length (conflictCause s1) > 0 =
+      if currentLevel lt1 == 0
+          then (trailSet lt1, UNSAT)
+          else solve . backjump . learn . explainUIP . applyConflict $ s1
+  | S.size (trailSet lt1) == S.size v1 = (trailSet lt1, SAT)
+  | otherwise = solve . decide $ s1
+  where s1@(S _ lt1 _ _ _ _ _ _ _ v1) = exhaustiveUnitPropogate $ s0
 
 solveFormula :: Formula -> (Set Literal, SAT)
-solveFormula f = solve $ emptyState { formula = f, variables = F.foldl' (\st l -> S.insert (abs l) st) S.empty . concat $ f }
+solveFormula f = case cleanFormula f of
+                     (s, UNDEF) -> solve s
+                     (s,     r) -> (trailSet $ litTrail s, r)
 
 emptyState :: State
-emptyState = S [] [] (T [] S.empty) (C M.empty S.empty Nothing 0) M.empty S.empty
+emptyState = S
+    { formula       = V.empty
+    , litTrail      = T 0 M.empty S.empty
+    , watchList     = M.empty
+    , watch1        = M.empty
+    , watch2        = M.empty
+    , unitsQueue    = S.empty
+    , conflict      = C V.empty 0 0 0
+    , conflictCause = V.empty
+    , reasons       = M.empty
+    , variables     = S.empty
+    }

@@ -5,11 +5,13 @@ module ParseDimacs ( parseDimacsFile
 
 import Types
 
-import Control.Monad (liftM)
-import Text.Parsec( ParseError )
-import Text.Parsec.Char
-import Text.Parsec.Combinator
-import Text.Parsec.Prim
+import Control.Monad          (liftM)
+import Data.Vector            (fromList)
+import Text.Parsec            (ParseError, Parsec, parse, try)
+import Text.Parsec.Char       (char, space)
+import Text.Parsec.Combinator (manyTill, many1)
+import Text.Parsec.Prim       (many, unexpected)
+
 import qualified Text.Parsec.Token as T
 
 type Parser a = Parsec String () a
@@ -20,10 +22,10 @@ parseDimacsFile fileName = do
     return (parse cnf fileName input)
 
 cnf :: Parser Formula
-cnf = cnfHeader >> many clause
+cnf = cnfHeader >> many clause >>= return . fromList
 
 clause :: Parser Clause
-clause = lexeme int `manyTill` try (symbol "0")
+clause = liftM fromList $ lexeme int `manyTill` try (symbol "0")
 
 -- Parses into `(numVars, numClauses)'.
 cnfHeader :: Parser (Int, Int)
