@@ -127,7 +127,7 @@ alterWatchList i = M.alter (Just . maybe [i] (i :))
 
 notifyWatches :: State -> Literal -> State
 notifyWatches s0 l = F.foldl' loop (s0 { watchList = M.insert l [] $ watchList s0 }) $ M.findWithDefault [] l $ watchList s0
-  where loop s1@(S _ lt@(T _ _ m1) wl _ _ q _ _ _ _) ci
+  where loop s1@(S _ lt@(T _ _ _ m1) wl _ _ q _ _ _ _) ci
           | S.member clauseW1 m1 = s1'
           | otherwise = case getUnwatchedNonfalsifiedLiteral lt clause clauseW1 clauseW2 of
                                   Just l' -> setWatch2 ci l' sSwap
@@ -143,7 +143,7 @@ notifyWatches s0 l = F.foldl' loop (s0 { watchList = M.insert l [] $ watchList s
                 s1'      = sSwap { watchList = alterWatchList ci l wl }
 
 getUnwatchedNonfalsifiedLiteral :: LiteralTrail -> Clause -> Literal -> Literal -> Maybe Literal
-getUnwatchedNonfalsifiedLiteral (T _ _ ms) c w1 w2 = (V.!? 0) . V.filter (\x -> S.notMember (-x) ms) . V.filter (\x -> x /= w1 && x /= w2) $ c
+getUnwatchedNonfalsifiedLiteral (T _ _ _ ms) c w1 w2 = (V.!? 0) . V.filter (\x -> S.notMember (-x) ms) . V.filter (\x -> x /= w1 && x /= w2) $ c
 
 -- Unit Propogation
 
@@ -204,7 +204,7 @@ solve s0
           else solve . backjump . learn . explainUIP . applyConflict $ s1
   | S.size (trailSet lt1) == S.size v1 = (trailSet lt1, SAT)
   | otherwise = solve . decide $ s1
-  where s1@(S _ lt1 _ _ _ _ _ _ _ v1) = exhaustiveUnitPropogate $ s0
+  where s1@(S _ lt1 _ _ _ _ _ _ _ v1) = exhaustiveUnitPropogate s0
 
 solveFormula :: Formula -> (Set Literal, SAT)
 solveFormula f = case cleanFormula f of
@@ -214,7 +214,7 @@ solveFormula f = case cleanFormula f of
 emptyState :: State
 emptyState = S
     { formula       = V.empty
-    , litTrail      = T 0 M.empty S.empty
+    , litTrail      = T 0 M.empty M.empty S.empty
     , watchList     = M.empty
     , watch1        = M.empty
     , watch2        = M.empty
