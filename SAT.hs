@@ -4,10 +4,10 @@
 -- This solver uses techniques through v.9 of the solver in that paper
 
 module SAT ( solveFormula
+           , contradicts
            , satisfies
            ) where
 
-import Control.Arrow (first)
 import Data.Maybe    (fromJust)
 import Data.Set      (Set)
 
@@ -15,7 +15,7 @@ import qualified Data.Foldable      as F (foldl')
 import qualified Data.List          as L (span)
 import qualified Data.IntMap.Strict as M (alter, empty, findWithDefault, insert, lookup)
 import qualified Data.Set           as S (delete, elemAt, empty, filter, deleteFindMin, fromList, insert, map, member, notMember, null, size, toList, union)
-import qualified Data.Vector        as V (all, any, dropWhile, empty, filter, foldl', fromList, last, length, map, singleton, snoc, takeWhile, toList, (!), (!?))
+import qualified Data.Vector        as V (all, any, empty, filter, foldl', fromList, last, length, map, singleton, snoc, toList, (!), (!?))
 
 import Types
 
@@ -35,7 +35,7 @@ decisionLevel lt = length . decisionsTo lt
 
 prefixToLevel :: LiteralTrail -> Int -> LiteralTrail
 prefixToLevel t@(T lt ms) i = T keep $ F.foldl' (\st (x, _) -> S.delete x st) ms delete
-  where (delete, keep) = L.span (\(l, _) -> decisionLevel t l >= i) lt
+  where (delete, keep) = L.span (\(l, _) -> decisionLevel t l > i) lt
 
 -- Preconditon: There is at least one literal in c that is asserted in the lit trail
 lastAssertedLiteral :: LiteralTrail -> Clause -> Literal
@@ -44,6 +44,9 @@ lastAssertedLiteral (T lt _) c = fst . head . filter (\(l, _) -> S.member l c') 
 
 satisfies :: Set Literal -> Formula -> Bool
 satisfies ms = V.all (V.any (`S.member` ms))
+
+contradicts :: Set Literal -> Formula -> Bool
+contradicts ms = V.any (V.all (flip S.member ms . negate))
 
 -- Conflict resolution
 
@@ -54,9 +57,7 @@ findLastAssertedLiteral s@(S _ lt _ _ _ _ c _ _ _) = s { conflict = c { c1stLast
 countCurrentLevelLits :: State -> State
 countCurrentLevelLits s@(S _ lt _ _ _ _ c _ _ _) = s { conflict = conflict' }
   where level     = currentLevel lt
-        conflict' = c { cNum = V.length
-                             . V.takeWhile (\l -> decisionLevel lt (-l) == level)
-                             . V.dropWhile (\l -> decisionLevel lt (-l) /= level) $ cClause c }
+        conflict' = c { cNum = V.length . V.filter (\l -> decisionLevel lt (-l) == level) $ cClause c }
 
 setConflictAnalysisClause :: State -> Clause -> State
 setConflictAnalysisClause s c = countCurrentLevelLits . findLastAssertedLiteral $ s { conflict = c' }
@@ -74,24 +75,13 @@ explainUIP s
 isUIP :: State -> Bool
 isUIP = (== 1) . cNum . conflict
 
-{-
-explainSubsumption :: State -> State
-explainSubsumption s@(S _ _ lt c _ _ _ _) = F.foldl' (\st l -> if subsumes cSet (S.delete l $ S.fromList $ getReason s l) then explain st l else st) s cNot'
-  where (Just cL) = c1stLast c
-        cSet  = S.insert (-cL) $ cPartial c
-        cNot' = S.filter (`S.notMember` litSet lt) . S.map negate $ cSet
-
-subsumes :: Set Literal -> Set Literal -> Bool
-subsumes c1 c2 = S.isProperSubsetOf c2 c1
--}
-
 explain :: State -> Literal -> State
 explain s l = case getReason s l of
   Nothing -> error ("Explain didn't find a reason for " ++ show l)
-  Just  r -> setConflictAnalysisClause s $ resolve (cClause . conflict $ s) r (-l)
+  Just  r -> setConflictAnalysisClause s . resolve (cClause . conflict $ s) r $ (-l)
 
 resolve :: Clause -> Clause -> Literal -> Clause
-resolve c1 c2 l = V.fromList . S.toList . S.union c1Set $ c2Set
+resolve c1 c2 l = V.fromList . S.toList $ S.union c1Set c2Set
   where c1Set = S.delete l    . S.fromList . V.toList $ c1
         c2Set = S.delete (-l) . S.fromList . V.toList $ c2
 
@@ -215,8 +205,7 @@ cleanClause s UNDEF c =
         ms            = litSet $ litTrail s
         clauseIndex   = V.length $ formula s
         updateWatches = setWatch2 clauseIndex (cCleanList V.! 1) . setWatch1 clauseIndex headCClean $ s
-        updateVars    = updateWatches { variables = V.foldl' (\st l -> S.insert (abs l) st) (variables s) cCleanList }
-        s'            = updateVars { formula = V.snoc (formula s) cCleanList }
+        s'            = updateWatches { formula = V.snoc (formula s) cCleanList, variables = V.foldl' (\st l -> S.insert (abs l) st) (variables s) cCleanList }
 
 -- Deciding variable assignments
 
@@ -233,20 +222,20 @@ decide s@(S _ lt _ _ _ _ _ _ _ vs) = assertLiteral s fstUnassigned True
 
 -- Solver
 
-solve :: State -> (LiteralTrail, SAT)
+solve :: State -> (Set Literal, SAT)
 solve s0
   | V.length (conflictCause s1) > 0 =
       if currentLevel lt1 == 0
-          then (lt1, UNSAT)
+          then (litSet lt1, UNSAT)
           else solve . backjump . learn . explainUIP . applyConflict $ s1
-  | S.size (litSet lt1) == S.size v1 = (lt1, SAT)
-  | otherwise = solve . decide $! s1
-  where s1@(S _ lt1 _ _ _ _ _ _ _ v1) = exhaustiveUnitPropogate s0
+  | S.size (litSet lt1) == S.size v1 = (litSet lt1, SAT)
+  | otherwise = solve . decide $ s1
+  where s1@(S _ lt1 _ _ _ _ _ _ _ v1) = exhaustiveUnitPropogate $ s0
 
-solveFormula :: Formula -> (Bool, SAT)
+solveFormula :: Formula -> (Set Literal, SAT)
 solveFormula f = case cleanFormula f of
-                     (s, UNDEF) -> first (flip satisfies (formula s) . litSet) . solve  $ s
-                     (s,     r) -> (satisfies (litSet . litTrail $ s) (formula s), r)
+                     (s, UNDEF) -> solve s
+                     (s,     r) -> (litSet $ litTrail s, r)
 
 emptyState :: State
 emptyState = S
